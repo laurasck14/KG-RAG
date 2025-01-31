@@ -1,13 +1,12 @@
 import torch, sys
 from transformers import pipeline, AutoTokenizer
 from langchain_huggingface import HuggingFacePipeline  # Updated import
-from langchain.agents import initialize_agent, Tool
-from langchain.agents.tools import tool
+from transformers.agents import CodeAgent, Tool
 
 from dotenv import load_dotenv
 from llama_index.core.agent import ReActAgent
 from llama_index.core.tools import FunctionTool
-from llama_index.agent.openai import OpenAIAgent
+# from llama_index.agent.openai import OpenAIAgent
 
 
 # Load a pre-trained Hugging Face model
@@ -35,33 +34,43 @@ def initialize_llm():
     # Return the HuggingFacePipeline object
     return HuggingFacePipeline(pipeline=llm_pipeline)
 
-# Define a simple tool to extend functionality
-@tool
-def format_response_as_list(response: str) -> str:
-    """Format the response as a list."""
-    items = response.split('\n')
-    formatted_response = "\n".join([f"- {item.strip()}" for item in items if item.strip()])
-    return formatted_response
+# Define custom tools with the required attributes
+class MultiplyTool(Tool):
+    name = "multiply"
+    description = "Multiply two numbers"
+    inputs = {"a": {"type": "number", "description": "The first number"}, "b": {"type": "number", "description": "The second number"}}
+    output_type = "number"
 
-# Initialize an agent with optional tools
-def initialize_agent_with_tools(llm):
-    tools = [format_response_as_list]  # Add more tools here
-    return initialize_agent(tools, llm, agent="zero-shot-react-description", verbose=True)
+    def forward(self, a: float, b: float) -> float:
+        return a * b
+
+class AddTool(Tool):
+    name = "add"
+    description = "Add two numbers"
+    inputs = {"a": {"type": "number", "description": "The first number"}, "b": {"type": "number", "description": "The second number"}}
+    output_type = "number"
+
+    def forward(self, a: float, b: float) -> float:
+        return a + b
 
 def main(): 
-    # # Ask the user if they want to use tools
-
+    # Ask the user if they want to use tools
     model_selection = None
     while model_selection not in ["rag", "llm"]:
         model_selection = input("Do you want to use the RAG or only the LLM? (rag/llm): ").strip().lower()
+        if model_selection == "exit":
+            print("Goodbye!")
+            sys.exit()
 
-        if model_selection == "rag":
-            rag = print("Not implemented yet, bye") # Initialize the RAG
+        elif model_selection == "rag":
+            print("Not implemented yet, bye") # Initialize the RAG
             sys.exit()
 
         elif model_selection == "llm":
             llm = initialize_llm()  # Initialize the LLM
-            agent = initialize_agent_with_tools(llm)  # Initialize the agent with tools
+            # multiply_tool = MultiplyTool()
+            # add_tool = AddTool()
+            # agent = CodeAgent(tools=[multiply_tool, add_tool], llm_engine=llm, verbose=True)  # Initialize the agent
     
     print("\n--- Question for the LLM ---")
     print("Type 'exit' to quit.\n")
@@ -72,20 +81,13 @@ def main():
             print("Goodbye!")
             break
 
-        if user_input and llm:
-            # Directly query the model
+        if user_input :#and agent:
+            # Use the agent to handle the query
             response = llm.invoke(user_input)
-
-        elif user_input and rag:
-            # Use the RAG model
-            print("Not implemented yet, bye")   
-    
-        # if agent:
-        #     # Use the agent for response
-        #     response = agent.run(user_input)          
-
-        # Access the first element of the response list
-        print(f"LLM: {response}\n")
+            # response = agent.run(user_input)
+            if isinstance(response, list):
+                response = response[0]  # Ensure response is a string
+            print(f"LLM:\n{response}\n")
 
 if __name__ == "__main__":
     main()
