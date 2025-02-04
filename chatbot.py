@@ -8,8 +8,6 @@ from llama_index.core.agent import ReActAgent
 from llama_index.core.tools import FunctionTool
 from llama_index.core.llms import ChatMessage
 
-# Load a pre-trained Hugging Face model
-
 def system_tool_call():
     content = textwrap.dedent("""
         <|begin_of_text|><|start_header_id|>system<|end_header_id|>
@@ -72,22 +70,17 @@ def initialize_llm():
         tokenizer.pad_token_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
     
     # Set a chat template for the tokenizer
-    # tokenizer.chat_template = """
-    #     {% if not add_generation_prompt is defined %}
-    #         {% set add_generation_prompt = false %}
-    #     {% endif %}
-    #     {% for message in messages %}   
-    #        {{ message['role'] + ': ' + message['content'] }}
-    #     {% endfor %}
-    #     {% if add_generation_prompt %}
-    #         {{ '<|im_start|>assistant\n' }}
-    #     {% endif %}
-    # """
+    tokenizer.chat_template = """
+        {% if not add_generation_prompt is defined %}
+            {% set add_generation_prompt = false %}
+        {% endif %}
+        {% for message in messages %}   
+            <|im_start|>{{ message['role'] }}{{ message['content'] }}<|im_end|>
+       {% endfor %}
+    """
 
     system_prompt = """
-    <|begin_of_text|><|start_header_id|>system<|end_header_id|>
-        You are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
-    {user_input}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+        You are a rare diseases specialist. Please answer the user's medical-related questions concisely and return enumerated lists when necessary.
     """
     
     # Initialize the Hugging Face LLM
@@ -107,7 +100,7 @@ def initialize_llm():
         model_name="meta-llama/Llama-3.2-3B",
         device_map="auto",
         stopping_ids=None, #[50278, 50279, 50277, 1, 0],
-        # tokenizer_kwargs={"max_length": 4096},
+        tokenizer_kwargs={"max_length": 4096},
         # uncomment this if using CUDA to reduce memory usage
         model_kwargs={"torch_dtype": torch.float32},
         # is_chat_model=True,
@@ -140,8 +133,8 @@ def main():
 
                 if user_input:
                     response = llm.chat(
-                        [ChatMessage(role="system", content=system_tool_call()), 
-                         ChatMessage(role="user", content=user_input)])
+                        # [ChatMessage(role="system", content=system_tool_call()), 
+                         [ChatMessage(role="user", content=user_input)])
                     print(str(response),"\n")
                     
 
