@@ -16,10 +16,39 @@ def initialize_llm():
     if tokenizer.pad_token_id is None: #no <pad> token previously defined, only eos_token
         tokenizer.pad_token = "<|end_of_text|>"
         tokenizer.pad_token_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
-    
-    # Always answer the user's medical-related questions concisely and shortly in the form of an enumerated list of disease names, without explanations and summarizing the main results. 
+       
+    # Initialize the Hugging Face LLM
+    llm = HuggingFaceLLM(
+        context_window=4096,
+        max_new_tokens=1052,
+        generate_kwargs={
+            "temperature": 0.65, 
+            "do_sample": True,
+            "pad_token_id": tokenizer.pad_token_id,
+            "top_k": 5, 
+            "top_p": 0.85
+            },
+        tokenizer=tokenizer,
+        model_name="meta-llama/Llama-3.2-3B-Instruct",
+        device_map="auto",
+        stopping_ids=[tokenizer.eos_token_id],
+        tokenizer_kwargs={"max_length": None},
+        model_kwargs={"torch_dtype": torch.float16},
+        is_chat_model=True,
+    )
+    return llm
+
+def initialize_rag():
+    # storage_context = StorageContext.from_defaults(persist_dir="~/scratch-llm/storage/PrimeKG_index_2/")
+    # index = load_index_from_storage(storage_context)
+    # query_engine = index.as_query_engine()
+    # return query_engine
+    pass
+
+def main(): 
     system_prompt = """
         You are a rare diseases specialist.
+        Always answer the user's medical-related questions concisely and shortly in the form of an enumerated list of disease names, without explanation and summarizing the main results. 
 
         Instructions:
         - If the user provides a list of symptoms, return a numbered list of **possible diseases**.
@@ -41,36 +70,6 @@ def initialize_llm():
         4. Chest pain
     """
     
-    # Initialize the Hugging Face LLM
-    llm = HuggingFaceLLM(
-        context_window=4096,
-        max_new_tokens=512,
-        generate_kwargs={
-            "temperature": 0.65, 
-            "do_sample": True,
-            "pad_token_id": tokenizer.pad_token_id,
-            "top_k": 5, 
-            "top_p": 0.85
-            },
-        system_prompt=system_prompt,
-        tokenizer=tokenizer,
-        model_name="meta-llama/Llama-3.2-3B-Instruct",
-        device_map="auto",
-        stopping_ids=[tokenizer.eos_token_id],
-        tokenizer_kwargs={"max_length": None},
-        model_kwargs={"torch_dtype": torch.float16},
-        is_chat_model=True,
-    )
-    return llm
-
-def initialize_rag():
-    # storage_context = StorageContext.from_defaults(persist_dir="~/scratch-llm/storage/PrimeKG_index_2/")
-    # index = load_index_from_storage(storage_context)
-    # query_engine = index.as_query_engine()
-    # return query_engine
-    pass
-
-def main(): 
     # Ask the user if they want to use tools
     model_selection = None
     while model_selection not in ["rag", "llm"]:
@@ -106,9 +105,11 @@ def main():
                 if user_input.lower() == "exit":
                     print("Goodbye!")
                     break
-
+                
                 if user_input:
-                    response = llm.chat([ChatMessage(role=MessageRole.USER, content=user_input)])
+                    response = llm.chat(
+                        [ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
+                        ChatMessage(role=MessageRole.USER, content=user_input)])
                     response = re.sub(r"\*\*(.*?)\*\*", r"\033[1m\1\033[0m", str(response)) # Bolden the text
                     print(response,"\n")
                 
