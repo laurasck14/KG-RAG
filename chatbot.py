@@ -1,6 +1,6 @@
 import torch, sys, re
+import weave
 from transformers import pipeline, AutoTokenizer
-from transformers.agents import CodeAgent, Tool
 from llama_index.llms.huggingface import HuggingFaceLLM
 
 from dotenv import load_dotenv
@@ -8,6 +8,7 @@ from llama_index.core.agent import ReActAgent
 from llama_index.core import StorageContext, load_index_from_storage
 from llama_index.core.llms import ChatMessage, MessageRole
 
+@weave.op()
 def initialize_llm():
     print("Loading the language model...")
 
@@ -20,14 +21,14 @@ def initialize_llm():
     # Initialize the Hugging Face LLM
     llm = HuggingFaceLLM(
         context_window=4096,
-        max_new_tokens=1052,
+        max_new_tokens=1024,
         generate_kwargs={
             "temperature": 0.65, 
             "do_sample": True,
             "pad_token_id": tokenizer.pad_token_id,
             "top_k": 5, 
             "top_p": 0.85
-            },
+        },
         tokenizer=tokenizer,
         model_name="meta-llama/Llama-3.2-3B-Instruct",
         device_map="auto",
@@ -38,6 +39,7 @@ def initialize_llm():
     )
     return llm
 
+@weave.op()
 def initialize_rag():
     # storage_context = StorageContext.from_defaults(persist_dir="~/scratch-llm/storage/PrimeKG_index_2/")
     # index = load_index_from_storage(storage_context)
@@ -45,29 +47,32 @@ def initialize_rag():
     # return query_engine
     pass
 
+@weave.op()
 def main(): 
     system_prompt = """
         You are a rare diseases specialist.
-        Always answer the user's medical-related questions concisely and shortly in the form of an enumerated list of disease names, without explanation and summarizing the main results. 
+        Always answer the user's medical-related questions concisely and shortly in the form of an enumerated list of disease/symptom names and summarizing the main results.
+        In case of any doubt, indicate that you don't know the answer. 
 
         Instructions:
         - If the user provides a list of symptoms, return a numbered list of **possible diseases**.
         - If the user asks for the symptoms of a disease, return a numbered list of its **main symptoms**.
-        - Do not include explanations or additional context — just the list.
+        - Inlcude only a brief explanations or additional context.
 
         Examples:
         User: What are the most likely diseases for symptoms: fever, fatigue, and cough?
         Response:
-        1. Influenza
-        2. COVID-19
-        3. Pneumonia
+        1. Influenza: a viral infection that attacks your respiratory system.
+        2. COVID-19: infectious disease caused by the coronavirus SARS-CoV-2.
+        3. Pneumonia: inflamation of the air sacs in one or both lungs.   
+        4. Common cold: a viral infection of your nose and throat. 
 
         User: What are the main symptoms of pneumonia?
         Response:
-        1. Fever
-        2. Cough
-        3. Shortness of breath
-        4. Chest pain
+        1. Fever: a temporary increase in your body temperature.
+        2. Cough: a sudden, often repetitive, protective reflex.
+        3. Shortness of breath: a feeling of not being able to get enough air.
+        4. Chest pain: discomfort or pain in the chest.
     """
     
     # Ask the user if they want to use tools
