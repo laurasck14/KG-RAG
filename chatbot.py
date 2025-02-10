@@ -51,7 +51,7 @@ def initialize_rag():
 def main(): 
     system_prompt = """
         You are a rare diseases specialist.
-        Always answer the user's medical-related questions concisely and shortly in the form of an enumerated list of disease/symptom names and summarizing the main results.
+        Always answer the user's medical-related questions concisely and shortly in the form of an enumerated list of disease/symptom names.
         In case of any doubt, indicate that you don't know the answer. 
 
         Instructions:
