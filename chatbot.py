@@ -43,7 +43,7 @@ def initialize_llm():
 def initialize_rag():
     # storage_context = StorageContext.from_defaults(persist_dir="~/scratch-llm/storage/PrimeKG_index_2/")
     # index = load_index_from_storage(storage_context)
-    # query_engine = index.as_query_engine()
+    # query_engine = index.as_query_engine() #.as_chat_engine()
     # return query_engine
     pass
 
