@@ -1,24 +1,23 @@
 import torch, sys, re
 import weave
-from transformers import pipeline, AutoTokenizer
-from llama_index.llms.huggingface import HuggingFaceLLM
+from transformers import AutoTokenizer
 
-from dotenv import load_dotenv
-from llama_index.core.agent import ReActAgent
-from llama_index.core import StorageContext, load_index_from_storage
 from llama_index.core.llms import ChatMessage, MessageRole
+weave.init("chatbot")
 
 @weave.op()
 def initialize_llm():
+
     print("Loading the language model...")
+    from llama_index.llms.huggingface import HuggingFaceLLM
 
     # Initialize the tokenizer
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B-Instruct")    
+    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B-Instruct", padding_side="left", device_map="auto")    
     if tokenizer.pad_token_id is None: #no <pad> token previously defined, only eos_token
         tokenizer.pad_token = "<|end_of_text|>"
         tokenizer.pad_token_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
-       
-    # Initialize the Hugging Face LLM
+     
+    # Initialize Hugging Face LLM
     llm = HuggingFaceLLM(
         context_window=4096,
         max_new_tokens=1024,
@@ -29,9 +28,9 @@ def initialize_llm():
             "top_k": 5, 
             "top_p": 0.85
         },
-        tokenizer=tokenizer,
+        tokenizer_name="meta-llama/Llama-3.2-3B-Instruct",
         model_name="meta-llama/Llama-3.2-3B-Instruct",
-        device_map="auto",
+        device_map="cuda" if torch.cuda.is_available() else "cpu",
         stopping_ids=[tokenizer.eos_token_id],
         tokenizer_kwargs={"max_length": None},
         model_kwargs={"torch_dtype": torch.float16},
@@ -39,12 +38,30 @@ def initialize_llm():
     )
     return llm
 
+
 @weave.op()
 def initialize_rag():
+    from llama_index.core import StorageContext, load_index_from_storage
+
     # storage_context = StorageContext.from_defaults(persist_dir="~/scratch-llm/storage/PrimeKG_index_2/")
     # index = load_index_from_storage(storage_context)
     # query_engine = index.as_query_engine() #.as_chat_engine()
-    # return query_engine
+
+
+    # print("\n--- Question for the RAG ---")
+            # print("Type 'exit' to quit.\n")
+            
+            # while True:
+            #     user_input = input("\033[1;34mUser question: \033[0m").strip()
+            #     if user_input.lower() == "exit":
+            #         print("Goodbye!")
+            #         del llm
+            #         torch.cuda.empty_cache()
+            #         break
+
+            #     if user_input:
+            #         response = rag.query(user_input)
+            # return response
     pass
 
 @weave.op()
@@ -74,49 +91,41 @@ def main():
         3. Shortness of breath: a feeling of not being able to get enough air.
         4. Chest pain: discomfort or pain in the chest.
     """
-    
+    def call_chat(llm, system_prompt, user_input):
+        return llm.chat(
+                [ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
+                ChatMessage(role=MessageRole.USER, content=user_input)])
+
     # Ask the user if they want to use tools
     model_selection = None
     while model_selection not in ["rag", "llm"]:
         model_selection = input("Do you want to use the RAG or only the LLM? (rag/llm): ").strip().lower()
-        if model_selection == "exit":
+        if (model_selection == "exit") or (model_selection == "quit") :
             print("Goodbye!")
             sys.exit()
 
         elif model_selection == "rag":
             print("Not implemented yet, bye") # Initialize the RAG
             sys.exit()
-            # rag = initialize_rag()  # Initialize the RAG
-            # print("\n--- Question for the RAG ---")
-            # print("Type 'exit' to quit.\n")
-            
-            # while True:
-            #     user_input = input("\033[1;34mUser question: \033[0m").strip()
-            #     if user_input.lower() == "exit":
-            #         print("Goodbye!")
-            #         break
-
-            #     if user_input:
-            #         response = rag.query(user_input)
-            #         print(str(response),"\n")
+            # response = initialize_rag() 
+            # print(str(response),"\n")          
 
         elif model_selection == "llm":
             llm = initialize_llm()  # Initialize the LLM
-            print("\n--- Question for the LLM ---")
-            print("Type 'exit' to quit.\n")
 
+            print("\n--- Question for the LLM ---")
+            print("Type 'exit' or 'quit' to leave.\n")
             while True:
                 user_input = input("\033[1;34mUser question: \033[0m").strip()
-                if user_input.lower() == "exit":
+                if (user_input.lower() == "exit") or (user_input.lower() == "quit"):
                     print("Goodbye!")
+                    del llm
+                    torch.cuda.empty_cache()
                     break
                 
-                if user_input:
-                    response = llm.chat(
-                        [ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
-                        ChatMessage(role=MessageRole.USER, content=user_input)])
-                    response = re.sub(r"\*\*(.*?)\*\*", r"\033[1m\1\033[0m", str(response)) # Bolden the text
+                elif not (user_input.lower() == "exit") and not (user_input.lower() == "quit"):
+                    response = call_chat(llm, system_prompt, user_input)
                     print(response,"\n")
-                
+            
 if __name__ == "__main__":
     main()
