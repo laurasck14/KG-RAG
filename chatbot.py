@@ -2,14 +2,16 @@ import torch, sys, re
 import weave
 from transformers import AutoTokenizer
 
+from llama_index.core import Settings
 from llama_index.core.llms import ChatMessage, MessageRole
-weave.init("chatbot")
+from vector_graph_retriever import VectorGraphRetriever as VectorGraphRetriever
+# weave.init("chatbot")
 
 @weave.op()
 def initialize_llm():
-
     print("Loading the language model...")
     from llama_index.llms.huggingface import HuggingFaceLLM
+    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
     # Initialize the tokenizer
     tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B-Instruct", padding_side="left", device_map="auto")    
@@ -35,45 +37,45 @@ def initialize_llm():
         tokenizer_kwargs={"max_length": None},
         model_kwargs={"torch_dtype": torch.float16},
         is_chat_model=True,
+        
     )
-    return llm
-
+    Settings.llm = llm
+    Settings.chunk_size = 1024
+    Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+    return Settings
 
 @weave.op()
-def initialize_rag():
-    from llama_index.core import StorageContext, load_index_from_storage
+def initialize_rag(llm, mode, user_input, vector_store):
+    retriever = VectorGraphRetriever(llm, mode, user_input)
+    results = retriever.retrieve_from_vector(llm, mode, user_input, vector_store)
 
-    # storage_context = StorageContext.from_defaults(persist_dir="~/scratch-llm/storage/PrimeKG_index_2/")
-    # index = load_index_from_storage(storage_context)
-    # query_engine = index.as_query_engine() #.as_chat_engine()
-
-
-    # print("\n--- Question for the RAG ---")
-            # print("Type 'exit' to quit.\n")
-            
-            # while True:
-            #     user_input = input("\033[1;34mUser question: \033[0m").strip()
-            #     if user_input.lower() == "exit":
-            #         print("Goodbye!")
-            #         del llm
-            #         torch.cuda.empty_cache()
-            #         break
-
-            #     if user_input:
-            #         response = rag.query(user_input)
-            # return response
-    pass
+    return results
 
 @weave.op()
 def main(): 
-    system_prompt = """
+    prompt_disease = """
         You are a rare diseases specialist.
-        Always answer the user's medical-related questions concisely and shortly in the form of an enumerated list of disease/symptom names.
+        Always answer the user's medical-related questions concisely and shortly in the form of an enumerated list of symptom names.
         In case of any doubt, indicate that you don't know the answer. 
 
         Instructions:
-        - If the user provides a list of symptoms, return a numbered list of **possible diseases**.
-        - If the user asks for the symptoms of a disease, return a numbered list of its **main symptoms**.
+        - You will receive the name of a disease, return a numbered list of its main symptoms.
+        - Inlcude only a brief explanations or additional context.
+
+        User: What are the main symptoms of pneumonia?
+        Response:
+        1. Fever: a temporary increase in your body temperature.
+        2. Cough: a sudden, often repetitive, protective reflex.
+        3. Shortness of breath: a feeling of not being able to get enough air.
+        4. Chest pain: discomfort or pain in the chest.
+    """
+    prompt_symptom = """
+        You are a rare diseases specialist.
+        Always answer the user's medical-related questions concisely and shortly in the form of an enumerated list of disease names.
+        In case of any doubt, indicate that you don't know the answer. 
+
+        Instructions:
+        - You will receive a list of symptoms, return a numbered list of possible diseases.
         - Inlcude only a brief explanations or additional context.
 
         Examples:
@@ -83,14 +85,8 @@ def main():
         2. COVID-19: infectious disease caused by the coronavirus SARS-CoV-2.
         3. Pneumonia: inflamation of the air sacs in one or both lungs.   
         4. Common cold: a viral infection of your nose and throat. 
-
-        User: What are the main symptoms of pneumonia?
-        Response:
-        1. Fever: a temporary increase in your body temperature.
-        2. Cough: a sudden, often repetitive, protective reflex.
-        3. Shortness of breath: a feeling of not being able to get enough air.
-        4. Chest pain: discomfort or pain in the chest.
     """
+
     def call_chat(llm, system_prompt, user_input):
         return llm.chat(
                 [ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
@@ -105,27 +101,65 @@ def main():
             sys.exit()
 
         elif model_selection == "rag":
-            print("Not implemented yet, bye") # Initialize the RAG
-            sys.exit()
-            # response = initialize_rag() 
-            # print(str(response),"\n")          
+            print("\n--- RAG: ---")
+            vector_store = VectorGraphRetriever._init_vector_store()
+            llm = initialize_llm()
 
-        elif model_selection == "llm":
-            llm = initialize_llm()  # Initialize the LLM
-
-            print("\n--- Question for the LLM ---")
-            print("Type 'exit' or 'quit' to leave.\n")
             while True:
-                user_input = input("\033[1;34mUser question: \033[0m").strip()
-                if (user_input.lower() == "exit") or (user_input.lower() == "quit"):
+                print("Enter 'disease' to ask for the symptoms of a disease.\nEnter 'symptoms' to ask for a list of diseases based on symptoms.")
+                print("Type 'exit' or 'quit' to leave.\n")
+                mode = input("\033[1;34mMode: \033[0m").strip()
+                if (mode.lower() == "exit") or (mode.lower() == "quit"):
                     print("Goodbye!")
                     del llm
                     torch.cuda.empty_cache()
                     break
                 
-                elif not (user_input.lower() == "exit") and not (user_input.lower() == "quit"):
-                    response = call_chat(llm, system_prompt, user_input)
-                    print(response,"\n")
+                elif (mode.lower() == "disease"):
+                    user_input = input("\033[1;34mEnter a disease name: \033[0m").strip()
+                    results = initialize_rag(llm, mode, user_input, vector_store)
+
+                    print("\nVector Query Results:")
+                    for i, node_id in enumerate(results.ids):
+                        print(f"Node ID: {node_id}, Score: {results.similarities[i]:.4f}")
+                    print("\n")
+                    # response = call_chat(llm, prompt_disease, user_input, vector_store)
+                    # print(response.message.content,"\n")
+
+                elif (mode.lower() == "symptoms"):
+                    user_input = input("\033[1;34mEnter a list of symptoms: \033[0m").strip()
+                    results = initialize_rag(llm, mode, user_input, vector_store)
+
+                    print("\nVector Query Results:")
+                    for node_id, score in results:
+                        print(f"Node ID: {node_id}, Score: {score:.4f}") 
+                    print("\n")   
+                    # response = call_chat(llm, prompt_symptom, user_input, vector_store)
+                    # print(response.message.content,"\n")       
+
+        elif model_selection == "llm":
+            llm = initialize_llm()  # Initialize the LLM
+
+            print("\n--- LLM: ---")
+            while True:
+                print("Enter 'disease' to ask for the symptoms of a disease.\nEnter 'symptoms' to ask for a list of diseases based on symptoms.")
+                print("Type 'exit' or 'quit' to leave.\n")
+                mode = input("\033[1;34mMode: \033[0m").strip()
+                if (mode.lower() == "exit") or (mode.lower() == "quit"):
+                    print("Goodbye!")
+                    del llm
+                    torch.cuda.empty_cache()
+                    break
+                
+                elif (mode.lower() == "disease"):
+                    user_input = input("\033[1;34mEnter a disease name: \033[0m").strip()
+                    response = call_chat(llm, prompt_disease, user_input)
+                    print(response.message.content,"\n")
+
+                elif (mode.lower() == "symptoms"):
+                    user_input = input("\033[1;34mEnter a list of symptoms: \033[0m").strip()
+                    response = call_chat(llm, prompt_symptom, user_input)
+                    print(response.message.content,"\n")
             
 if __name__ == "__main__":
     main()
