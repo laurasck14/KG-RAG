@@ -8,7 +8,6 @@ from vector_graph_retriever import VectorGraphRetriever as VectorGraphRetriever
 
 @weave.op()
 def initialize_llm():
-    # Add CPU throttling to prevent blocking UI thread
     import os, io
     from contextlib import redirect_stdout, redirect_stderr
     
@@ -22,7 +21,6 @@ def initialize_llm():
         from llama_index.llms.huggingface import HuggingFaceLLM
         from llama_index.embeddings.huggingface import HuggingFaceEmbedding
         
-        # Initialize the tokenizer
         tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B-Instruct", 
                                                 padding_side="left", 
                                                 device_map="auto",
@@ -86,30 +84,28 @@ def main():
     
     shared_state = SharedState()
     
-    # Function to run vector store initialization in background thread
     def initialize_vector_store_background():
+        """Function to run vector store initialization in background thread"""
         shared_state.vector_store_initializing = True
         try:
             shared_state.vector_store = VectorGraphRetriever._init_vector_store()
             shared_state.vector_store_ready = True
-            print("\nVector store ready!")
         except Exception as e:
             print(f"Error initializing vector store: {e}")
         shared_state.vector_store_initializing = False
         
-    # Function to run graph store initialization in background thread
     def initialize_graph_store_background():
+        """Function to run graph store initialization in background thread"""
         shared_state.graph_store_initializing = True
         try:
             shared_state.graph_store = VectorGraphRetriever._init_graph_store()
             shared_state.graph_store_ready = True
-            print("\nGraph store ready!")
         except Exception as e:
             print(f"Error initializing graph store: {e}")
         shared_state.graph_store_initializing = False
     
-    # Function to ensure vector store is ready when needed
     def ensure_vector_store_ready():
+        """ Function to ensure vector store is ready when needed"""
         # Start initialization if not already started
         if not shared_state.vector_store_ready and not shared_state.vector_store_initializing:
             print("Starting vector store initialization...")
@@ -126,10 +122,9 @@ def main():
                 i = (i + 1) % 4
                 print(f"\rWaiting for vector store {spinner[i]}", end="")
                 time.sleep(0.1)
-            print("\rVector store ready!            ")
             
-    # Function to ensure graph store is ready when needed
     def ensure_graph_store_ready():
+        """ Function to ensure graph store is ready when needed"""
         # Start initialization if not already started
         if not shared_state.graph_store_ready and not shared_state.graph_store_initializing:
             print("Starting graph store initialization...")
@@ -144,7 +139,7 @@ def main():
             i = 0
             while not shared_state.graph_store_ready:
                 i = (i + 1) % 4
-                print(f"\rWaiting for graph store {spinner[i]}", end="")
+                print(f"\rWaiting for graph store {spinner[i]} ", end="")
                 time.sleep(0.1)
             print("\rGraph store ready!            ")
 
@@ -158,7 +153,7 @@ def main():
     graph_thread.start()
     
     # Initialize LLM directly (not in background) - this will block until finished
-    print("Initializing language model (this will take a moment)...")
+    print("Initializing language model...")
     try:
         settings = initialize_llm()
         shared_state.llm = settings.llm
@@ -214,13 +209,15 @@ def main():
         
         if (model_selection == "exit") or (model_selection == "quit"):
             print("Goodbye!")
+            #close Nebula connection
+            VectorGraphRetriever.stop_graph_store()
             sys.exit()
 
         elif model_selection == "rag":
             print("\n--- RAG: ---")
             
             while True:
-                print("Enter 'disease' to ask for the symptoms of a disease.")
+                print("\nEnter 'disease' to ask for the symptoms of a disease.")
                 print("Enter 'symptoms' to ask for a list of diseases based on symptoms.")
                 print("Type 'exit' or 'quit' to leave.\n")
                 
@@ -232,25 +229,35 @@ def main():
                     
                 elif (mode.lower() == "disease"):
                     user_input = input("\033[1;34mEnter a disease name: \033[0m").strip()
-                    ensure_vector_store_ready() # Wait for vector and graph store ready
+                    ensure_vector_store_ready() # Wait for vector and graph store to be ready
                     ensure_graph_store_ready()
                     results = initialize_rag(shared_state.llm, mode, user_input, shared_state.vector_store, shared_state.graph_store)
                     
                     print("\nGraph query Results:")
-                    for node_id, score in results:
-                        print(f"Node ID: {node_id}, Score: {score:.4f}")
-                    print("\n")
+                    print(f"Nodes associated with {user_input}:")
+                    if results:
+                        for node in results:                         
+                            print(f"  ID: {node.get('node_index', 'Unknown'):<10} | "
+                                  f"Score (vector): {node.get('score'):.4f} | "
+                                  f"Name: {node.get('node_name', 'Unknown')}")
+                    else:
+                        print("  No relevant nodes found.")
+
                 
                 elif (mode.lower() == "symptoms"):
                     user_input = input("\033[1;34mEnter a list of symptoms: \033[0m").strip()
-                    ensure_vector_store_ready() # Wait for vector and graph store ready
+                    ensure_vector_store_ready() # Wait for vector and graph store to be ready
                     ensure_graph_store_ready()
                     results = initialize_rag(shared_state.llm, mode, user_input, shared_state.vector_store, shared_state.graph_store)
-                    
-                    print("\nGraph query Results:")
-                    for node_id, score in results:
-                        print(f"Node ID: {node_id}, Score: {score:.4f}") 
-                    print("\n")   
+
+                    if results:
+                        for node in results:                         
+                            print(f"  ID: {node.get('node_index', 'Unknown'):<10} | "
+                                f"Score (vector): {node.get('score'):.4f} | "
+                                f"Name: {node.get('node_name', 'Unknown')}")
+                    else:
+                        print("  No relevant nodes found.")
+
                     
         elif model_selection == "llm":
             print("\n--- LLM: ---")
