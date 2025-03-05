@@ -90,6 +90,7 @@ class VectorGraphRetriever():
                 VectorGraphRetriever.nebula_instance.start()
             except Exception as e2:
                 print(f"Failed to initialize NebulaGraph after retry: {e2}")
+                VectorGraphRetriever.nebula_instance.stop()                
                 return None
 
         # Configure connection pool
@@ -251,30 +252,45 @@ class VectorGraphRetriever():
                 f"""
                     MATCH (e:Node__)
                     WHERE id(e) in $ids
-                    MATCH p=(e)-[r:Relation__{{label:"disease-disease"}}]-(t)
+                    MATCH p=(e)-[r:Relation__{{label:"disease-protein"}}]-(t) 
                     UNWIND relationships(p) as rel
-                    RETURN DISTINCT e.Props__.node_name,
+                    RETURN DISTINCT 
+                        e.Props__.node_name, 
+                        e.Chunk__.text,
                         r.label,
-                        t.Props__.node_name,
+                        t.Props__.node_name, 
                         t.Chunk__.text
                 """, 
                 param_map={"ids": kg_ids}  # Use the list of all IDs
             )
 
             # Format the query results into a string list
-            context = []
-            if graph_nodes:
-                for item in graph_nodes:
-                    record = [
-                        item.get('e.Props__.node_name', 'Unknown'),  
-                        item.get('r.label', 'Unknown'),             
-                        item.get('t.Props__.node_name', 'Unknown'),  
-                        item.get('t.Chunk__.text', '')               
-                    ]
-                    string = f"{record[0]} is related to {record[2]} through a {record[1]} edge which has associated information: {record[3]}"
-                    context.append(string)
-            
-            # Return both results and context
+            # Use defaultdict to avoid explicit initialization
+            from collections import defaultdict
+
+            node_relations = defaultdict(lambda: {'text': '', 'relations': []})
+
+            # Process results in a single pass
+            for item in graph_nodes:
+                src_name = item.get('e.Props__.node_name', 'Unknown')
+                target_name = item.get('t.Props__.node_name', 'Unknown')
+                
+                # Set source text only once (first time the node is encountered)
+                if not node_relations[src_name]['text']:
+                    node_relations[src_name]['text'] = item.get('e.Chunk__.text', 'None')
+                
+                # Build relation string with conditional for target text
+                rel_string = f"is related to {target_name} through a {item.get('r.label', 'Unknown')} edge"
+                if target_text := item.get('t.Chunk__.text', ''):  # Using assignment expression
+                    rel_string += f" which has associated information: {target_text}"
+                
+                node_relations[src_name]['relations'].append(rel_string)
+
+            # Create context strings
+            context = [
+                f"{node} with associated text {data['text']}: {' . '.join(data['relations'])}"
+                for node, data in node_relations.items()
+            ]
             if not context:
                 context = [f"No graph relationships found for {', '.join(kg_ids)}"]
                 

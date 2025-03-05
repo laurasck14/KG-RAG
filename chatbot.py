@@ -226,6 +226,7 @@ def main():
         if (model_selection == "exit") or (model_selection == "quit"):
             print("Goodbye!")
             #close Nebula connection
+            torch.cuda.empty_cache()
             VectorGraphRetriever.stop_graph_store()
             sys.exit()
 
@@ -258,8 +259,8 @@ def main():
                                   f"Name: {node.get('node_name', 'Unknown')}")
                     else:
                         print("  No relevant nodes found.")
-                    print(f"\nContext retieved: {rag_context[0]}")
-                    response = call_chat(prompt_symptom, user_input, rag_context)
+                    print(f"\nContext retieved: {rag_context[:200]}")
+                    response = call_chat(prompt_disease, user_input, rag_context)
                     print(response.message.content,"\n")
                         
                 
@@ -276,7 +277,7 @@ def main():
                                 f"Name: {node.get('node_name', 'Unknown')}")
                     else:
                         print("  No relevant nodes found.")
-                    print(f"\nContext retieved: {rag_context[0]}")
+                    print(f"\nContext retieved: {rag_context[:200]}")
                     response = call_chat(prompt_symptom, user_input, rag_context)
                     print(response.message.content,"\n")
 
@@ -290,7 +291,6 @@ def main():
                 mode = input("\033[1;34mMode: \033[0m").strip()
                 if (mode.lower() == "exit") or (mode.lower() == "quit"):
                     print("Goodbye, leaving the LLM mode!")
-                    torch.cuda.empty_cache()
                     break
                 
                 elif (mode.lower() == "disease"):
