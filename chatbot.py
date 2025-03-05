@@ -259,7 +259,7 @@ def main():
                                   f"Name: {node.get('node_name', 'Unknown')}")
                     else:
                         print("  No relevant nodes found.")
-                    print(f"\nContext retieved: {rag_context[:200]}")
+                    print(f"\nContext retieved: {rag_context[0][:50]}")
                     response = call_chat(prompt_disease, user_input, rag_context)
                     print(response.message.content,"\n")
                         
@@ -277,7 +277,7 @@ def main():
                                 f"Name: {node.get('node_name', 'Unknown')}")
                     else:
                         print("  No relevant nodes found.")
-                    print(f"\nContext retieved: {rag_context[:200]}")
+                    print(f"\nContext retieved: {rag_context[0][:50]}")
                     response = call_chat(prompt_symptom, user_input, rag_context)
                     print(response.message.content,"\n")
 
