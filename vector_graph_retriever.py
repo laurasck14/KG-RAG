@@ -245,10 +245,41 @@ class VectorGraphRetriever():
                         'node_name': node_name,
                         'score': score
                     })
+
+            # Use kg_ids (not node_idx) for the structured query
+            graph_nodes = graph_store.structured_query(
+                f"""
+                    MATCH (e:Node__)
+                    WHERE id(e) in $ids
+                    MATCH p=(e)-[r:Relation__{{label:"disease-disease"}}]-(t)
+                    UNWIND relationships(p) as rel
+                    RETURN DISTINCT e.Props__.node_name,
+                        r.label,
+                        t.Props__.node_name,
+                        t.Chunk__.text
+                """, 
+                param_map={"ids": kg_ids}  # Use the list of all IDs
+            )
+
+            # Format the query results into a string list
+            context = []
+            if graph_nodes:
+                for item in graph_nodes:
+                    record = [
+                        item.get('e.Props__.node_name', 'Unknown'),  
+                        item.get('r.label', 'Unknown'),             
+                        item.get('t.Props__.node_name', 'Unknown'),  
+                        item.get('t.Chunk__.text', '')               
+                    ]
+                    string = f"{record[0]} is related to {record[2]} through a {record[1]} edge which has associated information: {record[3]}"
+                    context.append(string)
             
-            return formatted_results if formatted_results else nodes
+            # Return both results and context
+            if not context:
+                context = [f"No graph relationships found for {', '.join(kg_ids)}"]
+                
+            return formatted_results, context           
                 
         except Exception as e:
             print(f"Error querying graph store: {e}")
-            return nodes  # Return the original vector store results as fallback
-
+            return nodes, context  # Return the original vector store results as fallback

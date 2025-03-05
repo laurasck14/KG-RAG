@@ -66,8 +66,8 @@ def initialize_llm():
 def initialize_rag(llm, mode, user_input, vector_store, graph_store):
     retriever = VectorGraphRetriever(llm, mode, user_input, vector_store, graph_store)
     vector_nodes = retriever.retrieve_from_vector(Settings.embed_model, mode, user_input, vector_store)
-    results = retriever.retrieve_from_graph(graph_store, vector_nodes)
-    return results
+    results, context = retriever.retrieve_from_graph(graph_store, vector_nodes)
+    return results, context
 
 @weave.op()
 def main():
@@ -99,9 +99,14 @@ def main():
         shared_state.graph_store_initializing = True
         try:
             shared_state.graph_store = VectorGraphRetriever._init_graph_store()
-            shared_state.graph_store_ready = True
+            # Only mark as ready if we got a valid graph store
+            shared_state.graph_store_ready = shared_state.graph_store is not None
+            if not shared_state.graph_store_ready:
+                print("Graph store initialization failed (returned None)")
+
         except Exception as e:
             print(f"Error initializing graph store: {e}")
+            shared_state.graph_store_ready = False
         shared_state.graph_store_initializing = False
     
     def ensure_vector_store_ready():
@@ -171,6 +176,7 @@ def main():
         Instructions:
         - You will receive the name of a disease, return a numbered list of its main symptoms.
         - Inlcude only a brief explanations or additional context.
+        - In case you receive any context, include if it's relevant to generate a response
 
         User: What are the main symptoms of pneumonia?
         Response:
@@ -187,6 +193,7 @@ def main():
         Instructions:
         - You will receive a list of symptoms, return a numbered list of possible diseases.
         - Inlcude only a brief explanations or additional context.
+        - In case you receive any context, include if it's relevant to generate a response
 
         Examples:
         User: What are the most likely diseases for symptoms: fever, fatigue, and cough?
@@ -197,10 +204,19 @@ def main():
         4. Common cold: a viral infection of your nose and throat. 
     """
 
-    def call_chat(system_prompt, user_input):
-        return shared_state.llm.chat(
-                [ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
-                ChatMessage(role=MessageRole.USER, content=user_input)])
+    def call_chat(prompt_template, user_input, rag_context=None):
+        """Generate a response using the LLM with optional RAG context."""
+        if rag_context:
+            # Add RAG context to the system prompt
+            enhanced_prompt = f"{prompt_template}\n\nRelevant context:\n{rag_context}"
+        else:
+            enhanced_prompt = prompt_template
+            
+        response = Settings.llm.chat([
+            ChatMessage(role=MessageRole.SYSTEM, content=enhanced_prompt),
+            ChatMessage(role=MessageRole.USER, content=user_input)
+        ])
+        return response
 
     print("\nApplication ready")
     # Allow user interaction
@@ -231,7 +247,7 @@ def main():
                     user_input = input("\033[1;34mEnter a disease name: \033[0m").strip()
                     ensure_vector_store_ready() # Wait for vector and graph store to be ready
                     ensure_graph_store_ready()
-                    results = initialize_rag(shared_state.llm, mode, user_input, shared_state.vector_store, shared_state.graph_store)
+                    results, rag_context = initialize_rag(shared_state.llm, mode, user_input, shared_state.vector_store, shared_state.graph_store)
                     
                     print("\nGraph query Results:")
                     print(f"Nodes associated with {user_input}:")
@@ -242,13 +258,16 @@ def main():
                                   f"Name: {node.get('node_name', 'Unknown')}")
                     else:
                         print("  No relevant nodes found.")
-
+                    print(f"\nContext retieved: {rag_context[0]}")
+                    response = call_chat(prompt_symptom, user_input, rag_context)
+                    print(response.message.content,"\n")
+                        
                 
                 elif (mode.lower() == "symptoms"):
                     user_input = input("\033[1;34mEnter a list of symptoms: \033[0m").strip()
                     ensure_vector_store_ready() # Wait for vector and graph store to be ready
                     ensure_graph_store_ready()
-                    results = initialize_rag(shared_state.llm, mode, user_input, shared_state.vector_store, shared_state.graph_store)
+                    results, rag_context = initialize_rag(shared_state.llm, mode, user_input, shared_state.vector_store, shared_state.graph_store)
 
                     if results:
                         for node in results:                         
@@ -257,6 +276,9 @@ def main():
                                 f"Name: {node.get('node_name', 'Unknown')}")
                     else:
                         print("  No relevant nodes found.")
+                    print(f"\nContext retieved: {rag_context[0]}")
+                    response = call_chat(prompt_symptom, user_input, rag_context)
+                    print(response.message.content,"\n")
 
                     
         elif model_selection == "llm":
