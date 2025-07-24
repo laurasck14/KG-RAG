@@ -4,7 +4,7 @@ from transformers import AutoTokenizer
 
 from llama_index.core import Settings
 from llama_index.core.llms import ChatMessage, MessageRole
-from vector_graph_retriever import VectorGraphRetriever as VectorGraphRetriever
+from demo.vector_graph_retriever import VectorGraphRetriever as VectorGraphRetriever
 
 @weave.op()
 def initialize_llm():
