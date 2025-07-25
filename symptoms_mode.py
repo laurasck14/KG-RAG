@@ -1,14 +1,10 @@
-import os, pickle, time, json
+import os, pickle, time, json, pathlib, signal, torch
 from nebula3.gclient.net import ConnectionPool
 from nebula3.Config import Config
 from nebulagraph_lite import nebulagraph_let as ng_let
-import pathlib, os, json
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ['HF_HOME'] = str(pathlib.Path("~/scratch-llm/storage/cache/huggingface/").expanduser().absolute()) # '/scratch-llm/storage/cache/'
 # os.environ["TRANSFORMERS_CACHE"] = "~/scratch-llm/storage/models/"
-
-import torch, pickle
-import numpy as np
 
 from transformers import AutoTokenizer
 from nebulagraph_lite import nebulagraph_let as ng_let
@@ -25,8 +21,6 @@ from llama_index.llms.huggingface import HuggingFaceLLM
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
 from typing import List
-from numpy import dot
-from numpy.linalg import norm
 from pydantic import BaseModel, Field
 from llama_index.core.output_parsers import PydanticOutputParser
 
@@ -50,6 +44,28 @@ vector_store = SimpleVectorStore(
 )
 
 print("loading tokenizer and llm...")
+class TimeoutException(Exception):
+    pass
+
+def handler(signum, frame):
+    raise TimeoutException()
+signal.signal(signal.SIGALRM, handler)
+
+def safe_llm_call(summarizer, *args, timeout=300, **kwargs):
+    signal.alarm(timeout)
+    try:
+        response = summarizer.get_response(*args, **kwargs)
+        signal.alarm(0)
+        return response
+    except TimeoutException:
+        print("LLM call timed out. Skipping this item.")
+        return None
+    except RecursionError:
+        print("RecursionError: LLM summarizer entered an infinite loop. Skipping this item.")
+        return None
+    finally:
+        signal.alarm(0)
+
 tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B-Instruct", padding_side="left", device_map="auto")    
 if tokenizer.pad_token_id is None: #no <pad> token previously defined, only eos_token
     tokenizer.pad_token = "<|end_of_text|>"
@@ -106,7 +122,7 @@ class SymptomsMode():
         
         disease_counter = {}
         total_symptoms = len(query)
-        print(f"Processing {total_symptoms} symptoms: {query}")
+        # print(f"Processing {total_symptoms} symptoms: {query}")
         
         # Collect all diseases and count symptom matches
         for symptom in query:
@@ -175,7 +191,7 @@ class SymptomsMode():
             grouped_diseases[count].sort(key=lambda x: x[1]['name'])
         
         # Display results
-        print(f"\n=== Diseases with top 2 symptom match counts ===")
+        print(f"\n== Diseases with top 2 symptom match counts ==")
         all_top_diseases_list = []
         for count in sorted(grouped_diseases.keys(), reverse=True):
             print(f"\n--- Diseases with {count}/{total_symptoms} symptom matches ---")
@@ -203,7 +219,7 @@ CRITICAL INSTRUCTIONS:
 
 Always format your response as a VALID JSON:
     {
-        "symptoms": {query_str},
+        "symptoms": [{query_str}],
         "differential_diagnosis": [
             "disease1",
             "disease2",
@@ -228,7 +244,7 @@ CRITICAL INSTRUCTIONS:
 
 Always format your response as a VALID JSON:
     {
-        "symptoms": {query_str},
+        "symptoms": [{query_str}],
         "differential_diagnosis": [
             "disease1",
             "disease2",
@@ -240,7 +256,7 @@ Always format your response as a VALID JSON:
 """
 
 class Output(BaseModel):
-    symptoms: str = Field(..., description="List of symptoms provided by the user")
+    symptoms: List[str] = Field(..., description="List of symptoms provided by the user")
     differential_diagnosis: List[str] = Field(..., description="List of diseases identified as differential diagnosis") 
 output_parser = PydanticOutputParser(Output)
 
@@ -266,7 +282,7 @@ config.max_connection_pool_size = 10
 connection_pool = ConnectionPool()
 
 print("load phenopacket data...")
-output_file = os.path.expanduser('~/scratch-llm/storage/phenopackets/phenopacket_data.json')
+output_file = os.path.expanduser('~/scratch-llm/data/phenopackets/phenopackets_json.json')
 with open(output_file, 'r') as f:
     phenopackets = json.load(f)
 
@@ -300,61 +316,77 @@ try:
                 `group_name_bert` STRING, `orphanet_prevalence` STRING, `display_relation` STRING """,
         )
 
-        for disease_name, symptoms_list in phenopackets.items():
-            print(f" === RAG for symptoms: {symptoms_list}", flush=True)
-            if not symptoms_list:
+        from tqdm import tqdm
+        for case, info in tqdm(list(phenopackets.items())[:10], desc="Processing "):
+            print(f" === RAG for {case}: {info['diagnosis']}", flush=True)
+            if not info['symptoms']:
                 continue
 
-            context = SymptomsMode(vector_store, graph_store).retrieve(symptoms_list)
+            context = SymptomsMode(vector_store, graph_store).retrieve(info['symptoms'])
             prompt_template = PromptTemplate(rag_template)
             summarizer = TreeSummarize(verbose=True, llm=llm, summary_template=prompt_template)
 
-            response = summarizer.get_response(
-                query_str=", ".join(symptoms_list),
+            rag_response = safe_llm_call(summarizer,
+                query_str=", ".join(info['symptoms']),
                 text_chunks=", ".join([chunk for chunk in context['top_diseases_list']])
             )
 
             try:
-                parsed_response = output_parser.parse(response)
-                rag_results[symptoms_list] = {
-                    "gold_answer": disease_name,
+                parsed_response = output_parser.parse(rag_response)
+                rag_results[case] = {
+                    "gold_answer": info['diagnosis'],
+                    "symptoms": info['symptoms'],
                     "differential_diagnosis": parsed_response.differential_diagnosis
                 }
             except ValueError as e:
-                print(f"Error parsing response for symptoms {symptoms_list}: {e}")
-                rag_results[symptoms_list] = {
-                    "gold_answer": disease_name,
-                    "differential_diagnosis": []
+                print(f"Skipping {case} due to ValueError: {e}")
+                continue
+            try:
+                rag_response = output_parser.parse(rag_response)
+                rag_results[case] = {
+                    "gold_answer": info['diagnosis'],
+                    "symptoms": info['symptoms'],
+                    "differential_diagnosis": rag_response.differential_diagnosis
+                }
+            except ValueError as e:
+                print(f"Error parsing response for symptoms {info['symptoms']}: {e}")
+                rag_response = Output(symptoms=info['symptoms'], differential_diagnosis=[])
+                rag_results[case] = {
+                    "gold_answer": info['diagnosis'],
+                    "symptoms": info['symptoms'],
+                    "differential_diagnosis": rag_response.differential_diagnosis
                 }
 
-            print(f" == no RAG for symptoms: {symptoms_list}", flush=True)
+            print(f" == no RAG for {case}: {info['diagnosis']}", flush=True)
             prompt_template = PromptTemplate(no_rag_template)
-            prompt = prompt_template.format(query_str=", ".join(symptoms_list))
+            prompt = prompt_template.format(query_str=", ".join(info['symptoms']))
             response = llm.chat([ChatMessage(role="user", content=prompt)])
 
             response_text = response.message.content if hasattr(response, 'message') else str(response)
             try:
                 no_rag_response = output_parser.parse(response_text)
-                no_rag_results[symptoms_list] = {
-                    "gold_answer": disease_name,
+                no_rag_results[case] = {
+                    "gold_answer": info['diagnosis'],
+                    "symptoms": info['symptoms'],
                     "differential_diagnosis": no_rag_response.differential_diagnosis
                 }
 
             except ValueError as e:
-                print(f"Error parsing no RAG response for symptoms {symptoms_list}: {e}")
-                no_rag_response = Output(symptoms=", ".join(symptoms_list), differential_diagnosis=[])
-                no_rag_results[symptoms_list] = {
-                    "gold_answer": disease_name,
+                print(f"Error parsing no RAG response for symptoms {info['symptoms']}: {e}")
+                no_rag_response = Output(symptoms=info['symptoms'], differential_diagnosis=[])
+                no_rag_results[case] = {
+                    "gold_answer": info['diagnosis'],
+                    "symptoms": info['symptoms'],
                     "differential_diagnosis": no_rag_response.differential_diagnosis
                 }
         
         results_file = os.path.expanduser('~/scratch-llm/results/symptoms_mode/symptoms_rag_results.json')
         with open(results_file, 'w') as f:
-           json.dump(rag_results, f)
+           json.dump(rag_results, f, indent=1)
 
         results_file = os.path.expanduser('~/scratch-llm/results/symptoms_mode/symptoms_no_rag_results.json')
         with open(results_file, 'w') as f:
-            json.dump(no_rag_results, f)
+            json.dump(no_rag_results, f, indent=1),
 finally:
     # Release the session and close the connection pool for NebulaGraph
     session.release()
