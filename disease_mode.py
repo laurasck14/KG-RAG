@@ -329,14 +329,12 @@ try:
             unique_symptoms_rag = set()
             unique_symptoms = set()
             main_node = []
-            
+            context, phenotypes, top_node_id = DiseaseMode(vector_store, graph_store).retrieve(disease)
+            prompt_template, text_chunks, phenotype_context = get_prompt_and_inputs(context, phenotypes) # nodes retrieved are the same among calls, so just generate answers with the same context
+
             print("\n\n", flush=True)
             for run in range(3):
                 print(f" == RAG: {disease} (Run {run+1}) ==", flush=True)
-
-                context, phenotypes, top_node_id = DiseaseMode(vector_store, graph_store).retrieve(disease)
-                prompt_template, text_chunks, phenotype_context = get_prompt_and_inputs(context, phenotypes)
-                
                 if prompt_template:
                     summarizer = TreeSummarize(verbose=True, llm=llm, summary_template=prompt_template)
                     response = safe_llm_call(summarizer,
