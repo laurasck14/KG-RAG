@@ -276,17 +276,17 @@ def get_prompt_and_inputs(context, phenotypes):
         return None, None, None
 
 print("load phenopacket data...")
-output_file = os.path.expanduser('~/scratch-llm/storage/phenopackets/phenopacket_data.json')
+output_file = os.path.expanduser('~/scratch-llm/data/phenopackets/phenopacket_data.json')
 with open(output_file, 'r') as f:
     phenopackets = json.load(f)
 
 ## INITIALIZE NEBULAGRAPH
 # # Ensure all necessary containers are created
-# services = ['nebula-metad', 'nebula-graphd', 'nebula-storaged']
-# for service in services:
-#     os.system(f'udocker pull vesoft/{service}:v3')
-#     os.system(f'udocker create --name={service} vesoft/{service}:v3')
-#     os.system(f'udocker setup --execmode=F1 {service}')
+services = ['nebula-metad', 'nebula-storaged', 'nebula-graphd']
+for service in services:
+    os.system(f'udocker pull vesoft/{service}:v3')
+    os.system(f'udocker create --name={service} vesoft/{service}:v3')
+    os.system(f'udocker setup --execmode=F1 {service}')
 os.system('udocker ps')
 n = ng_let(in_container=True)
 n.start() # This takes around 5 mins
@@ -333,7 +333,7 @@ try:
             prompt_template, text_chunks, phenotype_context = get_prompt_and_inputs(context, phenotypes) # nodes retrieved are the same among calls, so just generate answers with the same context
 
             print("\n\n", flush=True)
-            for run in range(10):
+            for run in range(5):
                 print(f" == RAG: {disease} (Run {run+1}) ==", flush=True)
                 if prompt_template:
                     summarizer = TreeSummarize(verbose=True, llm=llm, summary_template=prompt_template)
@@ -417,5 +417,6 @@ try:
             json.dump(no_rag_results, f, indent=2)
 
 finally:
+    n.stop()
     session.release() # close Nebulagraph
     connection_pool.close()
