@@ -51,7 +51,7 @@ def handler(signum, frame):
     raise TimeoutException()
 signal.signal(signal.SIGALRM, handler)
 
-def safe_llm_call(summarizer, *args, timeout=300, **kwargs):
+def safe_llm_call(summarizer, *args, timeout=180, **kwargs):
     signal.alarm(timeout)
     try:
         response = summarizer.get_response(*args, **kwargs)
@@ -191,12 +191,12 @@ class SymptomsMode():
             grouped_diseases[count].sort(key=lambda x: x[1]['name'])
         
         # Display results
-        print(f"\n== Diseases with top 2 symptom match counts ==")
+        # print(f"\n== Diseases with top 2 symptom match counts ==")
         all_top_diseases_list = []
         for count in sorted(grouped_diseases.keys(), reverse=True):
-            print(f"\n--- Diseases with {count}/{total_symptoms} symptom matches ---")
+            # print(f"--- Diseases with {count}/{total_symptoms} symptom matches ---")
             for disease_id, data in grouped_diseases[count]:
-                print(f"ID: {data['index']} | Disease: {data['name']} | Matches: {data['count']}/{total_symptoms}")
+                # print(f"ID: {data['index']} | Disease: {data['name']} | Matches: {data['count']}/{total_symptoms}")
                 all_top_diseases_list.append(data['name'])
         
         return {
@@ -265,11 +265,11 @@ rag_results = []
 no_rag_results = []
 
 # Ensure all necessary containers are created, set up, and started
-# services = ['nebula-metad', 'nebula-graphd', 'nebula-storaged']
-# for service in services:
-#     os.system(f'udocker pull vesoft/{service}:v3')
-#     os.system(f'udocker create --name={service} vesoft/{service}:v3')
-#     os.system(f'udocker setup --execmode=F1 {service}')
+services = ['nebula-metad', 'nebula-storaged', 'nebula-graphd']
+for service in services:
+    os.system(f'udocker pull vesoft/{service}:v3')
+    os.system(f'udocker create --name={service} vesoft/{service}:v3')
+    os.system(f'udocker setup --execmode=F1 {service}')
 os.system('udocker ps')
 
 
@@ -338,9 +338,10 @@ try:
             return [disease for disease, score in sorted_diseases[:10]]
         
         from tqdm import tqdm
-        for p in tqdm(phenopackets[:4090], desc="Processing "):
-            print(f" === RAG for {p['id']}: {p['gold']['disease_name']}", flush=True)
+        for p in tqdm(phenopackets[4091:], desc="Processing "):
+            print(f"\n\n === {p['id']}: {p['gold']['disease_name']} ===", flush=True)
             if not p['symptoms']:
+                print(f"Skipping {p['id']}: {p['gold']['disease_name']} due to no symptoms provided.")
                 continue
 
             context = SymptomsMode(vector_store, graph_store).retrieve(p['symptoms'])
@@ -349,41 +350,53 @@ try:
             no_rag_run_results = []
 
             ## INCLUDE MULTIPLE RUNS
-            for run in range(10):
+            for run in range(3):
                 print(f" == RAG for {p['id']}: {p['gold']['disease_name']} (run {run+1}) ==", flush=True)
-                summarizer = TreeSummarize(verbose=True, llm=llm, summary_template=prompt_template)               
 
                 try:
-                    rag_response = safe_llm_call(summarizer,
-                    query_str=", ".join(p['symptoms']),
-                    text_chunks=", ".join([chunk for chunk in context['top_diseases_list']])
-                )
-                    if rag_response:
-                        parsed_response = output_parser.parse(rag_response)
-                        rag_run_result = {
-                            "run": run + 1,
-                            "response": parsed_response.differential_diagnosis
-                        }
-                        rag_run_results.append(rag_run_result)
-                    
-                    
-                except ValueError as e:
-                    print(f"Skipping RAG run {run+1} {p['id']} due to ValueError: {e}")
-                    continue
-
-                except ValueError as e:
-                    print(f"Error parsing response for symptoms {p['symptoms']}: {e}")
-                    rag_response = Output(symptoms=p['symptoms'], differential_diagnosis=[])
-                    rag_result = {
-                        "id": p['id'],
-                        "gold": {
-                            "disease_id": p['gold']['disease_id'],
-                            "disease_name": p['gold']['disease_name'],
-                        },
-                        "symptoms": p['symptoms'],
-                        "seed": 1234,
+                    prompt = prompt_template.format(
+                        query_str=", ".join(p['symptoms']),
+                        text_chunks=", ".join(context['top_diseases_list'])
+                    )
+                    response = llm.chat([ChatMessage(role="user", content=prompt)])
+                    response_text = response.message.content if hasattr(response, 'message') else str(response)
+                    rag_response = output_parser.parse(response_text)
+                    rag_run_result = {
+                        "run": run + 1,
                         "response": rag_response.differential_diagnosis
                     }
+                    rag_run_results.append(rag_run_result)                    
+                    
+                except ValueError as e: # context is too large for the LLM
+                    try: 
+                        summarizer = TreeSummarize(verbose=True, llm=llm, summary_template=prompt_template)    
+                        rag_response = safe_llm_call(summarizer, # in case context summarization gets stuck
+                            query_str=", ".join(p['symptoms']),
+                            text_chunks=", ".join([chunk for chunk in context['top_diseases_list']])
+                        )
+                        if not rag_response.differential_diagnosis:
+                            print(f"Empty response for symptoms {p['id']}: {p['gold']['disease_name']}")
+                            continue
+
+                        rag_run_result = {
+                            "run": run + 1,
+                            "response": rag_response.differential_diagnosis
+                        }
+                        rag_run_results.append(rag_run_result)
+
+                    except ValueError as e: #another error parsing the response
+                        print(f"Error parsing response for symptoms {p['symptoms']}: {e}")
+                        rag_response = Output(symptoms=p['symptoms'], differential_diagnosis=[])
+                        rag_result = {
+                            "id": p['id'],
+                            "gold": {
+                                "disease_id": p['gold']['disease_id'],
+                                "disease_name": p['gold']['disease_name'],
+                            },
+                            "symptoms": p['symptoms'],
+                            "seed": 1234,
+                            "response": rag_response.differential_diagnosis
+                        }
 
                 print(f" == no RAG for {p['id']}: {p['gold']['disease_name']}", flush=True)
                 try:
@@ -393,7 +406,10 @@ try:
 
                     response_text = response.message.content if hasattr(response, 'message') else str(response)
                     no_rag_response = output_parser.parse(response_text)
-
+                    if not no_rag_response.differential_diagnosis:
+                        print(f"Empty no RAG response for symptoms {p['id']}: {p['gold']['disease_name']}")
+                        continue
+                    
                     no_rag_result = {
                         "run": run + 1,
                         "response": no_rag_response.differential_diagnosis
@@ -440,17 +456,18 @@ try:
                 }
             no_rag_results.append(no_rag_result)
         
-        results_file = os.path.expanduser('~/scratch-llm/results/symptoms_mode/symptoms_rag_results1.jsonl')
+        results_file = os.path.expanduser('~/scratch-llm/results/symptoms_mode/symptoms_rag_results2.jsonl')
         with open(results_file, 'w') as f:
             for item in rag_results:
                f.write(json.dumps(item) + '\n')
 
-        results_file = os.path.expanduser('~/scratch-llm/results/symptoms_mode/symptoms_no_rag_results1.jsonl')
+        results_file = os.path.expanduser('~/scratch-llm/results/symptoms_mode/symptoms_no_rag_results2.jsonl')
         with open(results_file, 'w') as f:
             for item in no_rag_results:
                 f.write(json.dumps(item) + '\n')
 finally:
     # Release the session and close the connection pool for NebulaGraph
+    n.stop()
     session.release()
     connection_pool.close()
 
