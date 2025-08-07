@@ -68,7 +68,7 @@ def main(data_file, output_file=None):
 
         response = call_differential_diagnosis_sams(hpo_data) # call SAMS API
     
-        if response:
+        if response and pheno["symptoms_hpo"]:
             try:
                 json_response = response.json()
                 predictions = json_response['prediction']
@@ -101,7 +101,8 @@ def main(data_file, output_file=None):
             except KeyError as e:
                 print(f"Missing key in response for {pheno['id']}: {e}")
         else:
-            print(f"Failed to get response from the API for {pheno['id']}")
+            print(f"skipping {pheno['id']} due to missing symptoms")
+            continue
     
     # Save results to a JSON file
     with open(output_file, 'w') as f:
