@@ -7,7 +7,7 @@ from llama_index.core.vector_stores.simple import VectorStoreQuery
 from pyhpo import Ontology
 from typing import List
 from tqdm import tqdm
-from PrimeKG import PrimeKG
+from src.PrimeKG import PrimeKG
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
