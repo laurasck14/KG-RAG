@@ -14,21 +14,24 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 class DiseaseModeEvaluator(PrimeKG):
     """
     Disease Mode Evaluation class that inherits from PrimeKG.
-    Provides functionality to evaluate RAG vs No-RAG results against phenopacket data.
+    Provides functionality to evaluate RAG vs No-RAG results against a database.
     """
     
     def __init__(self):
         super().__init__()
-        self.phenopackets = None
+        self.dataset = None
+        self.dataset_name = None
         self.rag_results = None
         self.no_rag_results = None
 
-    def load_data(self, phenopackets_file, rag_results_file, no_rag_results_file):
-        """Load the phenopackets data and the RAG and No-RAG results."""
+    def load_data(self, dataset_file, rag_results_file, no_rag_results_file):
+        """Load the dataset and the RAG and No-RAG results."""
         print("Loading evaluation data...")
+
+        self.dataset_name = os.path.splitext(os.path.basename(dataset_file))[0]
         
-        with open(phenopackets_file, 'r') as f:
-            self.phenopackets = json.load(f)
+        with open(dataset_file, 'r') as f:
+            self.dataset = json.load(f)
 
         with open(rag_results_file, 'r') as f:
             self.rag_results = json.load(f)
@@ -36,7 +39,7 @@ class DiseaseModeEvaluator(PrimeKG):
         with open(no_rag_results_file, 'r') as f:
             self.no_rag_results = json.load(f)
 
-        print(f"✓ Loaded {len(self.phenopackets)} phenopackets")
+        print(f"✓ Loaded {len(self.dataset)} dataset entries | name: {self.dataset_name}")
         print(f"✓ Loaded {len(self.rag_results)} RAG results")
         print(f"✓ Loaded {len(self.no_rag_results)} No-RAG results")
 
@@ -84,12 +87,12 @@ class DiseaseModeEvaluator(PrimeKG):
 
     def evaluate_disease_mode(self):
         """
-        Evaluate the Disease Mode results by comparing RAG and No-RAG results against phenopacket data.
-        
+        Evaluate the Disease Mode results by comparing RAG and No-RAG results against a dataset.
+
         Returns:
             tuple: (results_dataframe, diseases_with_no_results)
         """
-        if not all([self.phenopackets, self.rag_results, self.no_rag_results]):
+        if not all([self.dataset, self.rag_results, self.no_rag_results]):
             raise ValueError("Data not loaded. Call load_data() first.")
         
         if not self.vector_store or not self.graph_store:
@@ -100,7 +103,7 @@ class DiseaseModeEvaluator(PrimeKG):
         _ = Ontology()  # Initialize the HPO ontology
 
         print("Running disease mode evaluation...")
-        for disease in tqdm(list(self.phenopackets.keys()), desc="Processing diseases"):
+        for disease in tqdm(list(self.dataset.keys()), desc="Processing diseases"):
             rag_result = self.rag_results.get(disease, None) 
             no_rag_result = self.no_rag_results.get(disease, None) 
             
@@ -113,10 +116,10 @@ class DiseaseModeEvaluator(PrimeKG):
                     set(n.lower() for n in no_rag_result['symptoms'])) if rag_result and no_rag_result else []
                 
                 rag_matches = set(s.lower() for s in rag_result['symptoms']).intersection(
-                    set(d.lower() for d in self.phenopackets[disease])) if rag_result else set()
+                    set(d.lower() for d in self.dataset[disease])) if rag_result else set()
                 
                 no_rag_matches = set(s.lower() for s in no_rag_result['symptoms']).intersection(
-                    set(d.lower() for d in self.phenopackets[disease])) if no_rag_result else set()
+                    set(d.lower() for d in self.dataset[disease])) if no_rag_result else set()
 
                 # Count parent matches for RAG
                 count_rag = 0
@@ -128,7 +131,7 @@ class DiseaseModeEvaluator(PrimeKG):
                     if hpo_term and hpo_term.parents:
                         for parent in hpo_term.parents:
                             parent_name = parent.name
-                            if parent_name.lower() in [d.lower() for d in self.phenopackets[disease]]:
+                            if parent_name.lower() in [d.lower() for d in self.dataset[disease]]:
                                 count_rag += 1
                 
                 # Count parent matches for No-RAG
@@ -141,30 +144,30 @@ class DiseaseModeEvaluator(PrimeKG):
                     if hpo_term and hpo_term.parents:
                         for parent in hpo_term.parents:
                             parent_name = parent.name
-                            if parent_name.lower() in [d.lower() for d in self.phenopackets[disease]]:
+                            if parent_name.lower() in [d.lower() for d in self.dataset[disease]]:
                                 count_no_rag += 1
 
                 # Calculate precision and recall
                 rag_precision = len(rag_matches) / len(rag_result['symptoms']) if len(rag_result['symptoms']) > 0 else 0.0
-                rag_recall = len(rag_matches) / len(self.phenopackets[disease]) if len(self.phenopackets[disease]) > 0 else 0.0
+                rag_recall = len(rag_matches) / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0
                 no_rag_precision = len(no_rag_matches) / len(no_rag_result['symptoms']) if len(no_rag_result['symptoms']) > 0 else 0.0
-                no_rag_recall = len(no_rag_matches) / len(self.phenopackets[disease]) if len(self.phenopackets[disease]) > 0 else 0.0
+                no_rag_recall = len(no_rag_matches) / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0
 
                 # Calculate symptom coverage
-                symptom_coverage = len(set(self.phenopackets[disease]) - set(rag_result['symptoms']) - set(no_rag_result['symptoms'])) / len(set(self.phenopackets[disease])) if len(set(self.phenopackets[disease])) > 0 else 0.0
+                symptom_coverage = len(set(self.dataset[disease]) - set(rag_result['symptoms']) - set(no_rag_result['symptoms'])) / len(set(self.dataset[disease])) if len(set(self.dataset[disease])) > 0 else 0.0
                 
                 results.append({
                     "disease": disease.strip().replace("\"", ""),
                     "common_symptoms": len(common_symptoms),
-                    "total_symptoms": len(self.phenopackets[disease]),
+                    "total_symptoms": len(self.dataset[disease]),
                     "rag_total_symptoms": len(rag_result['symptoms']),
                     "rag_matches": len(rag_matches) + count_rag,
                     "rag_hallucinations": len(rag_result['symptoms']) - len(rag_matches) - count_rag,
                     "no_rag_total_symptoms": len(no_rag_result['symptoms']),
                     "no_rag_matches": len(no_rag_matches) + count_no_rag,
                     "no_rag_hallucinations": len(no_rag_result['symptoms']) - len(no_rag_matches) - count_no_rag,
-                    "rag_accuracy": len(rag_matches) / len(self.phenopackets[disease]) if len(self.phenopackets[disease]) > 0 else 0.0,
-                    "no_rag_accuracy": len(no_rag_matches) / len(self.phenopackets[disease]) if len(self.phenopackets[disease]) > 0 else 0.0,
+                    "rag_accuracy": len(rag_matches) / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0,
+                    "no_rag_accuracy": len(no_rag_matches) / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0,
                     "rag_precision": rag_precision,
                     "rag_recall": rag_recall,
                     "no_rag_precision": no_rag_precision,
@@ -177,12 +180,12 @@ class DiseaseModeEvaluator(PrimeKG):
         
         return pd.DataFrame(results), no_results
 
-    def run_evaluation(self, phenopackets_file, rag_results_file, no_rag_results_file, output_dir=None):
+    def run_evaluation(self, dataset_file, rag_results_file, no_rag_results_file, output_dir=None):
         """
         Complete evaluation pipeline.
         
         Args:
-            phenopackets_file (str): Path to phenopackets data
+            dataset_file (str): Path to dataset file
             rag_results_file (str): Path to RAG results
             no_rag_results_file (str): Path to No-RAG results
             output_dir (str): Output directory for results
@@ -194,7 +197,7 @@ class DiseaseModeEvaluator(PrimeKG):
 
         try:
             # Load data
-            self.load_data(phenopackets_file, rag_results_file, no_rag_results_file)
+            self.load_data(dataset_file, rag_results_file, no_rag_results_file)
             
             # Start services and get stores
             if not self.start_services():
@@ -224,9 +227,9 @@ class DiseaseModeEvaluator(PrimeKG):
                 results_df, no_results = self.evaluate_disease_mode()
                 
                 # Save results
-                results_file = os.path.join(output_dir, 'phenopackets_results.csv')
-                no_results_file = os.path.join(output_dir, 'phenopackets_no_results.txt')
-                
+                results_file = os.path.join(output_dir, f'{self.dataset_name}_results.csv')
+                no_results_file = os.path.join(output_dir, f'{self.dataset_name}_no_results.txt') # the evaluated diseases is either not in RAG or no-RAG results
+
                 results_df.to_csv(results_file, index=False)
                 print(f"✓ Results saved to: {results_file}")
                 
@@ -250,8 +253,8 @@ class DiseaseModeEvaluator(PrimeKG):
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Disease Mode results using PrimeKG")
-    parser.add_argument('--phenopackets', type=str, required=True, 
-                       help='Path to the phenopackets data file, /home/lasa14/scratch-llm/data/phenopackets/phenopacket_data.json')
+    parser.add_argument('--data', type=str, required=True, 
+                       help='Path to the data file to run the evaluation with, data/phenopackets/phenopackets_diseases.json or data/Orphanet/orphanet*.json')
     parser.add_argument('--rag-results', type=str, required=True, 
                        help='Path to the RAG results file')
     parser.add_argument('--no-rag-results', type=str, required=True, 
@@ -263,7 +266,7 @@ def main():
     args = parser.parse_args()
 
     # Validate input files
-    for file_path in [args.phenopackets, args.rag_results, args.no_rag_results]:
+    for file_path in [args.dataset, args.rag_results, args.no_rag_results]:
         if not os.path.exists(file_path):
             print(f"Error: The file {file_path} does not exist.")
             exit(1)
@@ -272,7 +275,7 @@ def main():
     evaluator = DiseaseModeEvaluator()
     try:
         results_df, no_results = evaluator.run_evaluation(
-            args.phenopackets, 
+            args.dataset, 
             args.rag_results, 
             args.no_rag_results,
             args.output_dir
