@@ -106,11 +106,15 @@ class DiseaseModeEvaluator(PrimeKG):
         for disease in tqdm(list(self.dataset.keys()), desc="Processing diseases"):
             rag_result = self.rag_results.get(disease, None) 
             no_rag_result = self.no_rag_results.get(disease, None) 
-            
-            if rag_result is not None and no_rag_result is not None:
+
+            if (rag_result is not None and no_rag_result is not None and rag_result.get('symptoms') and no_rag_result.get('symptoms')):
                 # Ensure HPO terms are used for symptoms
                 rag_result['symptoms'] = self.find_HPO_embedding(rag_result['symptoms']) if rag_result['symptoms'] else []
                 no_rag_result['symptoms'] = self.find_HPO_embedding(no_rag_result['symptoms']) if no_rag_result['symptoms'] else []
+
+                if not rag_result['symptoms'] or not no_rag_result['symptoms']:
+                    no_results.append(disease)
+                    continue
 
                 common_symptoms = set(r.lower() for r in rag_result['symptoms']).intersection(
                     set(n.lower() for n in no_rag_result['symptoms'])) if rag_result and no_rag_result else []
