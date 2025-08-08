@@ -162,6 +162,7 @@ class DiseaseModeEvaluator(PrimeKG):
                 
                 results.append({
                     "disease": disease.strip().replace("\"", ""),
+                    "rag_top_node_id": rag_result['top_node_id'] if rag_result['top_node_id'] else None,
                     "common_symptoms": len(common_symptoms),
                     "total_symptoms": len(self.dataset[disease]),
                     "rag_total_symptoms": len(rag_result['symptoms']),
@@ -239,7 +240,8 @@ class DiseaseModeEvaluator(PrimeKG):
                 
                 with open(no_results_file, 'w') as f:
                     for disease in no_results:
-                        f.write(f"{disease.strip().replace('\"', '')}\n")
+                        clean_disease = disease.strip().replace('"', '')
+                        f.write(f"{clean_disease}\n")
                 print(f"✓ No results list saved to: {no_results_file}")
                 
                 print(f"✓ Evaluation complete! Processed {len(results_df)} diseases successfully")
@@ -263,14 +265,14 @@ def main():
                        help='Path to the RAG results file')
     parser.add_argument('--no-rag-results', type=str, required=True, 
                        help='Path to the No-RAG results file')
-    parser.add_argument('--output_dir', type=str, 
+    parser.add_argument('--outdir', type=str, 
                        default=os.path.expanduser('~/scratch-llm/results/disease_mode/'),
                        help='Output directory for results')
     
     args = parser.parse_args()
 
     # Validate input files
-    for file_path in [args.dataset, args.rag_results, args.no_rag_results]:
+    for file_path in [args.data, args.rag_results, args.no_rag_results]:
         if not os.path.exists(file_path):
             print(f"Error: The file {file_path} does not exist.")
             exit(1)
@@ -279,10 +281,10 @@ def main():
     evaluator = DiseaseModeEvaluator()
     try:
         results_df, no_results = evaluator.run_evaluation(
-            args.dataset, 
+            args.data, 
             args.rag_results, 
             args.no_rag_results,
-            args.output_dir
+            args.outdir
         )
         print("✓ Evaluation completed successfully!")
         
