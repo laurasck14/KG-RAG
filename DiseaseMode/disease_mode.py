@@ -1,23 +1,17 @@
-import os, pickle, time, json, signal, torch 
+import os, json, signal, torch, argparse 
 import numpy as np
-from nebula3.gclient.net import ConnectionPool
-from nebula3.Config import Config
-from nebulagraph_lite import nebulagraph_let as ng_let
-import pathlib, os, json
+import pathlib
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ['HF_HOME'] = str(pathlib.Path("~/scratch-llm/storage/cache/huggingface/").expanduser().absolute()) # '/scratch-llm/storage/cache/'
-# os.environ["TRANSFORMERS_CACHE"] = "~/scratch-llm/storage/models/"
+os.environ['HF_HOME'] = str(pathlib.Path("~/scratch-llm/storage/cache/huggingface/").expanduser().absolute())
 
 from transformers import AutoTokenizer
-from nebulagraph_lite import nebulagraph_let as ng_let
-from llama_index.graph_stores.nebula import NebulaPropertyGraphStore
-
 from llama_index.core import Settings
 from llama_index.core.schema import TextNode
 from llama_index.core.prompts import PromptTemplate
 from llama_index.core.base.llms.types import ChatMessage
 from llama_index.core.response_synthesizers import TreeSummarize
-from llama_index.core.vector_stores.simple import SimpleVectorStoreData, SimpleVectorStore, VectorStoreQuery
+from llama_index.core.vector_stores.simple import VectorStoreQuery
 from llama_index.core.vector_stores.types import MetadataFilters, FilterOperator
 from llama_index.llms.huggingface import HuggingFaceLLM
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
@@ -28,106 +22,120 @@ from numpy import dot
 from numpy.linalg import norm
 from pydantic import BaseModel, Field
 from llama_index.core.output_parsers import PydanticOutputParser
+from src.PrimeKG import PrimeKG
 
+class DiseaseModeGenerator(PrimeKG):
+    """
+    Disease Mode Generator class that inherits from PrimeKG.
+    Generates disease symptoms using RAG and No-RAG approaches.
+    """
+    
+    def __init__(self):
+        super().__init__()
+        self.llm = None
+        self.tokenizer = None
+        self.disease_filter = None
+        self.output_parser = None
+        self.dataset = None
+        self.dataset_name = None
+        
+    def setup_models(self):
+        """Setup LLM, tokenizer, and other models"""
+        print("Loading tokenizer and LLM...")
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            "meta-llama/Llama-3.2-3B-Instruct", 
+            padding_side="left", 
+            device_map="auto"
+        )    
+        
+        if self.tokenizer.pad_token_id is None:
+            self.tokenizer.pad_token = "<|end_of_text|>"
+            self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(self.tokenizer.pad_token)
 
-print("Loading embeddings...")
-# Load the actual data into all_nodes_embeddded
-with open(os.path.expanduser('~/scratch-llm/storage/nodes/all_nodes_all-mpnet-base-v2.pkl'), 'rb') as f:
-    all_nodes_embedded: List[TextNode] = pickle.load(f)
-# Create dictionaries from the nodes
-embedding_dict = {node.id_: node.get_embedding() for node in all_nodes_embedded}
-text_id_to_ref_doc_id = {node.id_: node.ref_doc_id or "None" for node in all_nodes_embedded}
-metadata_dict = {node.id_: node.metadata for node in all_nodes_embedded}
+        self.llm = HuggingFaceLLM(
+            model_name="meta-llama/Llama-3.2-3B-Instruct",
+            context_window=8192,
+            max_new_tokens=3048,
+            generate_kwargs={
+                "temperature": 0.10, 
+                "do_sample": True,
+                "pad_token_id": self.tokenizer.pad_token_id,
+                "top_k": 10, 
+                "top_p": 0.9,
+            },
+            model_kwargs={
+                "torch_dtype": torch.float16,
+            },
+            tokenizer=self.tokenizer,
+            device_map="cuda" if torch.cuda.is_available() else "cpu",
+            stopping_ids=[self.tokenizer.eos_token_id],
+            tokenizer_kwargs={"max_length": None},
+            is_chat_model=True,
+        )
 
-# Initialize the SimpleVectorStore with the dictionaries
-vector_store = SimpleVectorStore(
-    data = SimpleVectorStoreData(
-        embedding_dict=embedding_dict,
-        text_id_to_ref_doc_id=text_id_to_ref_doc_id,
-        metadata_dict=metadata_dict,
-    ),
-    stores_text=True
-)
+        Settings.llm = self.llm
+        Settings.chunk_size = 1024
+        Settings.embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-mpnet-base-v2")
 
-## LOAD LLM, EMBEDDING MODEL AND TOKENIZER
-print("Loading tokenizer and LLM...")
-tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B-Instruct", padding_side="left", device_map="auto")    
-if tokenizer.pad_token_id is None: #no <pad> token previously defined, only eos_token
-    tokenizer.pad_token = "<|end_of_text|>"
-    tokenizer.pad_token_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
+        # Setup disease filter
+        disease_dict = {
+            "key": "node_type",
+            "value": "disease",
+            "operator": FilterOperator.EQ
+        }
+        self.disease_filter = MetadataFilters(filters=[disease_dict])
+        
+        # Setup output parser
+        class Output(BaseModel):
+            disease: str = Field(description="The disease of interest given by the user.")
+            symptoms: List[str] = Field(description="Symptoms associated with the disease.")
+        
+        self.output_parser = PydanticOutputParser(Output)
+        print("✓ Models setup complete")
 
-# PASS TO THE NEXT ITEM IF LLM ENTERS AN INFINITE LOOP
-class TimeoutException(Exception):
-    pass
+    def load_data(self, dataset_file):
+        """Load dataset"""
+        self.dataset_name = os.path.splitext(os.path.basename(dataset_file))[0]
+        with open(dataset_file, 'r') as f:
+            self.dataset = json.load(f)
+        print(f"✓ Loaded dataset: {len(self.dataset)} | name: {self.dataset_name}")
 
-def handler(signum, frame):
-    raise TimeoutException()
-signal.signal(signal.SIGALRM, handler)
+    def safe_llm_call(self, summarizer, *args, timeout=300, **kwargs):
+        """Safe LLM call with timeout handling"""
+        # PASS TO THE NEXT ITEM IF LLM ENTERS AN INFINITE LOOP
+        class TimeoutException(Exception):
+            pass
 
-def safe_llm_call(summarizer, *args, timeout=300, **kwargs):
-    signal.alarm(timeout)
-    try:
-        response = summarizer.get_response(*args, **kwargs)
-        signal.alarm(0)
-        return response
-    except TimeoutException:
-        print("LLM call timed out. Skipping this item.")
-        return None
-    except RecursionError:
-        print("RecursionError: LLM summarizer entered an infinite loop. Skipping this item.")
-        return None
-    finally:
-        signal.alarm(0)
+        def handler(signum, frame):
+            raise TimeoutException()
+        
+        signal.signal(signal.SIGALRM, handler)
+        signal.alarm(timeout)
+        
+        try:
+            response = summarizer.get_response(*args, **kwargs)
+            signal.alarm(0)
+            return response
+        except TimeoutException:
+            print("LLM call timed out. Skipping this item.")
+            return None
+        except RecursionError:
+            print("RecursionError: LLM summarizer entered an infinite loop. Skipping this item.")
+            return None
+        finally:
+            signal.alarm(0)
 
-llm = HuggingFaceLLM(
-    model_name="meta-llama/Llama-3.2-3B-Instruct",
-    context_window=8192,
-    max_new_tokens=3048,
-    generate_kwargs={
-        "temperature": 0.10, 
-        "do_sample": True,
-        "pad_token_id": tokenizer.pad_token_id,
-        "top_k": 10, 
-        "top_p": 0.9,
-        # "repetition_penalty": 0.9,  # Added to reduce repetition
-        # "no_repeat_ngram_size": 3,  # Prevents repetition of n-grams
-    },
-    model_kwargs={
-        "torch_dtype": torch.float16,
-    },
-    tokenizer=tokenizer,
-    # device_map="auto",  # Automatically offload layers to CPU if GPU memory is insufficient
-    device_map="cuda" if torch.cuda.is_available() else "cpu",
-    stopping_ids=[tokenizer.eos_token_id],
-    tokenizer_kwargs={"max_length": None},
-    is_chat_model=True,
-)
-
-Settings.llm = llm
-Settings.chunk_size = 1024
-Settings.embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-mpnet-base-v2") # BAAI/bge-small-en-v1.5 /  m3 / sentence-transformers/all-mpnet-base-v2
-
-## DISEASE MODE CLASS
-print("Loading disease mode...")
-disease_dict = {
-    "key": "node_type",
-    "value": "disease",
-    "operator": FilterOperator.EQ
-}
-disease_filter = MetadataFilters(filters=[disease_dict])
-
-class DiseaseMode():
-    def __init__(self, vector_store: SimpleVectorStore, graph_store: NebulaPropertyGraphStore):
-        self.vector_store = vector_store
-        self.graph_store = graph_store
-
-    def retrieve(self, query: str):        
+    def retrieve_disease_context(self, query: str):
+        """Retrieve disease context using vector and graph stores"""
+        if not self.vector_store or not self.graph_store:
+            raise ValueError("Vector store or graph store not initialized")
+            
         query_embedding = Settings.embed_model.get_text_embedding(query)
         vector_results = self.vector_store.query(
             VectorStoreQuery(
                 query_embedding=query_embedding, 
                 similarity_top_k=1,
-                filters=disease_filter,
+                filters=self.disease_filter,
             )
         )
         
@@ -181,11 +189,11 @@ class DiseaseMode():
                 })
         
         results = sorted(results, key=lambda x: x["score"], reverse=True)
-        print("\nBest related nodes from graph query:")
-        for node in results:  # Skip primary node
-            print(f"ID: {node['node_index']} | node name: {node['node_name']} | score: {node['score']:.4f}")
-        
-        graph_phenotype = graph_store.structured_query(
+        # print("\nBest related nodes from graph query:")
+        # for node in results: 
+        #     print(f"ID: {node['node_index']} | node name: {node['node_name']} | score: {node['score']:.4f}")
+
+        graph_phenotype = self.graph_store.structured_query(
             """
             MATCH (e:Node__) WHERE id(e) == $ids
             MATCH (e)-[r:Relation__{label:"disease-phenotype-positive"}]-(t) 
@@ -205,218 +213,261 @@ class DiseaseMode():
         else:
             return [f"No graph relationships found for {results[0]['node_name']}"] if results else ["No results found"]
 
-print("prompt templates...")
-context_phenotype_template = """    
-    Context information is below:
-    {text_chunks}
+    def get_prompt_and_inputs(self, context, phenotypes):
+        """Format prompt and inputs for RAG"""
+        context_phenotype_template = """    
+        Context information is below:
+        {text_chunks}
 
-    Phenotype context is below:
-    {phenotype_context}
+        Phenotype context is below:
+        {phenotype_context}
 
-    You are a medical knowledge assistant specializing in rare diseases. Your task is to create a comprehensive list of symptoms for {query_str}.
+        You are a medical knowledge assistant specializing in rare diseases. Your task is to create a comprehensive list of symptoms for {query_str}.
 
-    CRITICAL INSTRUCTIONS:
-    1. Use the information from the context and your own knowledge to provide a comprehensive answer
-    2. Return MAXIMUM the 16 most relevant symptoms, if there are more than 16 symptoms, return the most relevant ones
-    3. Use HPO medical terminology and avoid using including redundant symptoms
-    4. Return EXACTLY this JSON format (no variations):
+        CRITICAL INSTRUCTIONS:
+        1. Use the information from the context and your own knowledge to provide a comprehensive answer
+        2. Return MAXIMUM the 16 most relevant symptoms, if there are more than 16 symptoms, return the most relevant ones
+        3. Use HPO medical terminology and avoid using including redundant symptoms
+        4. Return EXACTLY this JSON format (no variations):
 
-    Always format your response as a VALID JSON:
-    {
-        "disease": "{query_str}",
-        "symptoms": [
-            "name symptom1 using HPO terminology",
-            "name symptom2 using HPO terminology",
-            ... and so on
-        ]
-    }
+        Always format your response as a VALID JSON:
+        {
+            "disease": "{query_str}",
+            "symptoms": [
+                "name symptom1 using HPO terminology",
+                "name symptom2 using HPO terminology",
+                ... and so on
+            ]
+        }
 
-    Do NOT use nested objects. Use exactly "disease" and "symptoms" as shown.
-"""
-
-no_rag_template = """
-    You are a medical knowledge assistant specializing in rare diseases. Your task is to create a comprehensive list of symptoms for {query_str}.
-
-    CRITICAL INSTRUCTIONS:
-    1. Use only your own knowledge to provide a comprehensive answer
-    2. Return MAXIMUM the 16 most relevant symptoms, if there are more than 16 symptoms, return the most relevant ones
-    3. Use only HPO medical terminology and avoid including redundant symptoms
-    4. Return EXACTLY this JSON format (no variations):
-
-    Always format your response as a VALID JSON:
-    {
-        "disease": "{query_str}",
-        "symptoms": [
-            "name symptom1 using HPO terminology",
-            "name symptom2 using HPO terminology",
-            "name symptom3 using HPO terminology",
-            ...
-        ]
-    }
-
-    Do NOT use nested objects. Use exactly "disease" and "symptoms" as shown.
-"""
-
-print("JSON formatting...")
-class Output(BaseModel):
-    disease: str = Field(description="The disease of interest given by the user.")
-    symptoms: List[str] = Field(description="Symptoms associated with the disease.")
-output_parser = PydanticOutputParser(Output)
-
-# Format the response from the LLM
-def get_prompt_and_inputs(context, phenotypes):
-    prompt_template = PromptTemplate(context_phenotype_template)
-    if context and phenotypes:
-        return prompt_template, "\n".join(context), phenotypes
-    elif context and not phenotypes:
-        return prompt_template, "\n".join(context), ""
-    elif not context and phenotypes:
-        return prompt_template, "", phenotypes
-    else:
-        return None, None, None
-
-print("load phenopacket data...")
-output_file = os.path.expanduser('~/scratch-llm/data/phenopackets/phenopacket_data.json')
-with open(output_file, 'r') as f:
-    phenopackets = json.load(f)
-
-## INITIALIZE NEBULAGRAPH
-# # Ensure all necessary containers are created
-services = ['nebula-metad', 'nebula-storaged', 'nebula-graphd']
-for service in services:
-    os.system(f'udocker pull vesoft/{service}:v3')
-    os.system(f'udocker create --name={service} vesoft/{service}:v3')
-    os.system(f'udocker setup --execmode=F1 {service}')
-os.system('udocker ps')
-n = ng_let(in_container=True)
-n.start() # This takes around 5 mins
-
-# Configure connection pool
-config = Config()
-config.max_connection_pool_size = 10
-connection_pool = ConnectionPool()
-
-# Initialize connection pool
-try:
-    if not connection_pool.init([('127.0.0.1', 9669)], config):
-        raise Exception("Failed to initialize connection pool")
-    print("Connection pool initialized successfully")
-except Exception as e:
-    print(f"Error initializing connection pool: {e}")
-    exit(1)
-
-# Create a session and execute a query
-try:
-    with connection_pool.session_context('root', 'nebula') as session:
-        result = session.execute('SHOW SPACES;')
-        print(result, flush=True)
-        time.sleep(30)
-
-        print("NebulaPropertyGraphStore", flush=True)
-        graph_store = NebulaPropertyGraphStore(
-            space= "PrimeKG",
-            username = "root",
-            password = "nebula",
-            url = "nebula://localhost:9669",
-            props_schema= """`node_index` STRING, `node_type` STRING, `node_id` STRING, `node_name` STRING, 
-                `node_source` STRING, `mondo_id` STRING, `mondo_name` STRING, `group_id_bert` STRING, 
-                `group_name_bert` STRING, `orphanet_prevalence` STRING, `display_relation` STRING """,
-        )
+        Do NOT use nested objects. Use exactly "disease" and "symptoms" as shown.
+        """
         
-        rag_results = {} # store results
+        prompt_template = PromptTemplate(context_phenotype_template)
+        if context and phenotypes:
+            return prompt_template, "\n".join(context), phenotypes
+        elif context and not phenotypes:
+            return prompt_template, "\n".join(context), ""
+        elif not context and phenotypes:
+            return prompt_template, "", phenotypes
+        else:
+            return None, None, None
+
+    def generate_symptoms(self, outdir=None, runs=5):
+        """
+        Generate symptoms for all diseases using RAG and No-RAG approaches
+        
+        Args:
+            outdir (str): Output directory for results
+            runs (int): Number of runs per disease
+        """
+        if outdir is None:
+            outdir = os.path.expanduser('home/lasa14/scratch-llm/results/disease_mode/')
+
+        os.makedirs(outdir, exist_ok=True)
+
+        if not self.dataset:
+            raise ValueError("Phenopackets not loaded. Call load_data() first.")
+        
+        if not self.vector_store or not self.graph_store:
+            raise ValueError("Stores not initialized. Call start_services() and get stores first.")
+
+        no_rag_template = """
+        You are a medical knowledge assistant specializing in rare diseases. Your task is to create a comprehensive list of symptoms for {query_str}.
+
+        CRITICAL INSTRUCTIONS:
+        1. Use only your own knowledge to provide a comprehensive answer
+        2. Return MAXIMUM the 16 most relevant symptoms, if there are more than 16 symptoms, return the most relevant ones
+        3. Use only HPO medical terminology and avoid including redundant symptoms
+        4. Return EXACTLY this JSON format (no variations):
+
+        Always format your response as a VALID JSON:
+        {
+            "disease": "{query_str}",
+            "symptoms": [
+                "name symptom1 using HPO terminology",
+                "name symptom2 using HPO terminology",
+                "name symptom3 using HPO terminology",
+                ...
+            ]
+        }
+
+        Do NOT use nested objects. Use exactly "disease" and "symptoms" as shown.
+        """
+
+        rag_results = {}
         no_rag_results = {}
-        for disease in tqdm(list(phenopackets.keys()), desc="Processing diseases"): # running using the diseases in Phenopackets
+
+        
+        for disease in tqdm(list(self.dataset.keys()), desc="Processing diseases"):
             unique_symptoms_rag = set()
             unique_symptoms = set()
-            main_node = []
-            context, phenotypes, top_node_id = DiseaseMode(vector_store, graph_store).retrieve(disease)
-            prompt_template, text_chunks, phenotype_context = get_prompt_and_inputs(context, phenotypes) # nodes retrieved are the same among calls, so just generate answers with the same context
 
-            print("\n\n", flush=True)
-            for run in range(5):
+            no_rag_results[disease] = {
+                "symptoms": []  # Initialize empty list for no-RAG results
+            }
+            
+            context, phenotypes, top_node_id = self.retrieve_disease_context(disease)
+            prompt_template, text_chunks, phenotype_context = self.get_prompt_and_inputs(context, phenotypes)
+
+            for run in range(runs):
                 print(f" == RAG: {disease} (Run {run+1}) ==", flush=True)
                 if prompt_template:
-                    summarizer = TreeSummarize(verbose=True, llm=llm, summary_template=prompt_template)
-                    response = safe_llm_call(summarizer,
+                    summarizer = TreeSummarize(verbose=True, llm=self.llm, summary_template=prompt_template)
+                    response = self.safe_llm_call(summarizer,
                         query_str=disease,
                         text_chunks=text_chunks,
                         phenotype_context=phenotype_context,
                         timeout=300  
                     )
-                elif response is None:
-                    rag_results[disease] = {
-                        "top_node_id": top_node_id if 'top_node_id' in locals() else None,
-                        "symptoms": []
-                    }
-                    continue
 
-                else:
-                    response = None
-                    print(f"No context or phenotype data available for {disease}. Skipping summarization.", flush=True)
-                    rag_results[disease] = {
-                        "top_node_id": None,
-                        "symptoms": []
-                    }
-                    continue
-                try:
-                    if response is None:
-                        print(f"Warning: LLM response was None for {disease}. Skipping.", flush=True)
-                        rag_response = Output(disease=disease, symptoms=[])
-                        print("\n", rag_response.model_dump_json())
+                    if response is None:  # LLM call failed
                         rag_results[disease] = {
                             "top_node_id": top_node_id if 'top_node_id' in locals() else None,
                             "symptoms": []
                         }
-                        continue
+                    else:  # there is a response
+                        try:    
+                            rag_response = self.output_parser.parse(response)
+                            print("RESPONSE OK", flush=True)
+                            unique_symptoms_rag.update(rag_response.symptoms)
 
-                    rag_response = output_parser.parse(response)
-                    print(f"RESPONSE OK: {rag_response.model_dump_json()}", flush=True)
-                    print(f"Symptoms retrieved: {len(rag_response.symptoms)} for {rag_response.disease}\n", flush=True)
+                            rag_results[disease] = {
+                                "top_node_id": top_node_id if 'top_node_id' in locals() else None,
+                                "symptoms": list(unique_symptoms_rag)
+                            }
+                        except (RecursionError, ValueError) as e:  # response has formatting errors
+                            print(f"RAG failed for {disease}, skipping this run.", flush=True)
 
-                    unique_symptoms_rag.update(rag_response.symptoms)
-                    
+                else:  # no context or phenotype data available
+                    print(f"No context or phenotype data available for {disease}. Skipping summarization.", flush=True)
                     rag_results[disease] = {
                         "top_node_id": top_node_id if 'top_node_id' in locals() else None,
-                        "symptoms": list(unique_symptoms_rag)
+                        "symptoms": []
                     }
-                except (RecursionError, ValueError) as e:
-                    print(f"Warning ERROR: {e}")
-                    rag_response = Output(disease=disease, symptoms=[])
-                    print("\n", rag_response.model_dump_json())
-                    continue
 
                 print(f" == no RAG: {disease} (Run {run+1}) ==", flush=True)
                 template = PromptTemplate(no_rag_template)
                 prompt = template.format(query_str=disease)
-                response = llm.chat([ChatMessage(role="user", content=prompt)])
+                response = self.llm.chat([ChatMessage(role="user", content=prompt)])
 
                 response_text = response.message.content if hasattr(response, 'message') else str(response)
                 try:
-                    no_rag_response = output_parser.parse(response_text)
-                    print("RESPONSE OK:", no_rag_response.model_dump_json())
-                    print(f"Symptoms retrieved: {len(no_rag_response.symptoms)} for {no_rag_response.disease}\n")
+                    no_rag_response = self.output_parser.parse(response_text)
+                    print("RESPONSE OK", flush=True)
+                    # print(f"Symptoms retrieved: {len(no_rag_response.symptoms)} for {no_rag_response.disease}\n")
                     unique_symptoms.update(no_rag_response.symptoms)
 
+                    no_rag_results[disease] = {
+                        "symptoms": list(unique_symptoms)
+                    }
+
                 except (RecursionError, ValueError) as e:
-                    print(f"Warning ERROR: {e}")
-                    # Fallback: create an Output object with empty symptoms and the disease name
-                    no_rag_response = Output(disease=disease, symptoms=[])
-                    print("\n", no_rag_response.model_dump_json())
-                    continue
+                    print(f"No-RAG failed for {disease}, skipping this run.", flush=True)
+                print("\n\n", flush=True)
 
-                no_rag_results[disease] = {
-                    "symptoms": list(unique_symptoms)
-                }
 
-        results_file = os.path.expanduser('~/scratch-llm/results/disease_mode/disease_rag_results.json')
-        with open(results_file, 'w') as f:
+        # Save results
+        rag_results_file = os.path.join(outdir, f'{self.dataset_name}_rag_results_test.json')
+        with open(rag_results_file, 'w') as f:
            json.dump(rag_results, f, indent=2)
+        print(f"✓ RAG results saved to: {rag_results_file}")
 
-        results_file = os.path.expanduser('~/scratch-llm/results/disease_mode/disease_no_rag_results.json')
-        with open(results_file, 'w') as f:
+        no_rag_results_file = os.path.join(outdir, f'{self.dataset_name}_no_rag_results_test.json')
+        with open(no_rag_results_file, 'w') as f:
             json.dump(no_rag_results, f, indent=2)
+        print(f"✓ No-RAG results saved to: {no_rag_results_file}")
+        
+        return rag_results, no_rag_results
 
-finally:
-    n.stop()
-    session.release() # close Nebulagraph
-    connection_pool.close()
+    def run_disease_mode(self, dataset_file, outdir=None, runs=5):
+        """
+        Complete disease mode pipeline
+        
+        Args:
+            dataset_file (str): Path to dataset file
+            outdir (str): Output directory for results
+            runs (int): Number of runs per disease
+        """
+        try:
+            # Load dataset
+            self.load_data(dataset_file)
+
+            # Setup models
+            self.setup_models()
+            
+            # Start services and get stores
+            if not self.start_services():
+                raise Exception("Failed to start NebulaGraph services")
+            
+            # Get connection pool for session management
+            connection_pool = self.get_connection_pool()
+            if not connection_pool:
+                raise Exception("Failed to get connection pool")
+            
+            # Create session and get stores
+            with connection_pool.session_context('root', 'nebula') as session:
+                # Test connection
+                result = session.execute('SHOW SPACES;')
+                print(f"Connected to NebulaGraph: {result}")
+                
+                # Get graph and vector stores
+                graph_store = self.get_graph_store()
+                vector_store = self.get_vector_store()
+                
+                if not graph_store or not vector_store:
+                    raise Exception("Failed to initialize stores")
+                
+                print("✓ All stores initialized successfully")
+                
+                # Generate symptoms
+                rag_results, no_rag_results = self.generate_symptoms(outdir, runs)
+                
+                print(f"✓ Disease mode generation complete!")
+                print(f"  Processed {len(rag_results)} diseases with RAG")
+                print(f"  Processed {len(no_rag_results)} diseases without RAG")
+                
+                return rag_results, no_rag_results
+                
+        except Exception as e:
+            print(f"Error during disease mode generation: {e}")
+            raise
+        finally:
+            # Always cleanup
+            self.stop_services()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate disease symptoms using RAG and No-RAG approaches")
+    parser.add_argument('--dataset', type=str, required=True, 
+                       help='Path to the dataset file (json format with disease names as keys)')
+    parser.add_argument('--outdir', type=str, 
+                       default=os.path.expanduser('/home/lasa14/scratch-llm/results/disease_mode/'),
+                       help='Output directory for results')
+    parser.add_argument('--runs', type=int, default=5,
+                       help='Number of runs per disease (default: 5)')
+    
+    args = parser.parse_args()
+
+    # Validate input file
+    if not os.path.exists(args.dataset):
+        print(f"Error: The dataset file {args.dataset} does not exist.")
+        exit(1)
+
+    # Run disease mode generation
+    generator = DiseaseModeGenerator()
+    try:
+        rag_results, no_rag_results = generator.run_disease_mode(
+            args.dataset,
+            args.outdir,
+            args.runs
+        )
+        print("✓ Disease mode generation completed successfully!")
+        
+    except Exception as e:
+        print(f"✗ Disease mode generation failed: {e}")
+        exit(1)
+
+
+if __name__ == "__main__":
+    main()
