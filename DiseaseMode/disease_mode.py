@@ -318,7 +318,7 @@ class DiseaseModeGenerator(PrimeKG):
                         query_str=disease,
                         text_chunks=text_chunks,
                         phenotype_context=phenotype_context,
-                        timeout=300  
+                        timeout=400  
                     )
 
                     if response is None:  # LLM call failed
