@@ -9,7 +9,7 @@ import os
 def call_differential_diagnosis_sams(hpo_dict, base_url="https://genecascade.org/sams-cgi/DifferentialDiagnosis.cgi"):
     """
     Call the Differential Diagnosis CGI with HPO IDs.
-    Thought to run for the Phenopacket data in JSONL format, under /home/lasa14/scratch-llm/data/phenopackets/phenopackets_json.jsonl
+    Thought to run for the Phenopacket data in JSONL format, under /home/lasa14/scratch-llm/data/phenopackets/phenopackets_json.jsonl or phenopackets_with_absent.jsonl
     Output in JSONL format
     
     Args:
@@ -65,6 +65,11 @@ def main(data_file, output_file=None):
             hpo_id = symptom.split(":")[-1]
             hpo_id = str(int(hpo_id))
             hpo_data[hpo_id] = 2  # 2 indicates present in SAMS
+        if pheno.get("symptoms_hpo_absent"):
+            for symptom in pheno["symptoms_hpo_absent"]:
+                hpo_id = symptom.split(":")[-1]
+                hpo_id = str(int(hpo_id))
+                hpo_data[hpo_id] = 0  # 0 indicates absent in SAMS
 
         response = call_differential_diagnosis_sams(hpo_data) # call SAMS API
     
@@ -114,8 +119,8 @@ def main(data_file, output_file=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Call SAMS API for differential diagnosis")
     parser.add_argument('--data', required=True, help='Path to the phenopackets JSONL file')
-    parser.add_argument('--output', help='Path to the output JSONL file (optional)')
-    
+    parser.add_argument('--outdir', help='Path to the output directory (optional)')
+
     args = parser.parse_args()
-    
-    main(args.data, args.output)
+
+    main(args.data, args.outdir)
