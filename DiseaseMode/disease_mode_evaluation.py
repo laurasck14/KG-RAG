@@ -44,7 +44,7 @@ class DiseaseModeEvaluator(PrimeKG):
         print(f"✓ Loaded {len(self.no_rag_results)} No-RAG results")
 
     def find_HPO_embedding(self, symptoms: List[str]) -> List[str]:
-        """Map HPO terms to embeddings using vector and graph stores."""
+        """Map LLM symptom responses to HPO terms.  to embeddings using vector and graph stores."""
         if not self.vector_store or not self.graph_store:
             print("Error: Vector store or graph store not initialized")
             return symptoms
@@ -60,9 +60,9 @@ class DiseaseModeEvaluator(PrimeKG):
         for term in symptoms:
             term = term.strip()
             try: 
-                if Ontology.get_hpo_object(term.capitalize()):
+                if Ontology.get_hpo_object(term.capitalize()): # if HPOterm exist, use that one
                     new_symptoms.append(term.capitalize())
-            except RuntimeError:
+            except RuntimeError: # if no HPOterm, embed it and return the HPOterm with the highest cosine sim using PrimeKG
                 query_embedding = Settings.embed_model.get_text_embedding(term)
                 vector_results = self.vector_store.query(
                     VectorStoreQuery(
@@ -78,7 +78,7 @@ class DiseaseModeEvaluator(PrimeKG):
                 kg_node = self.graph_store.get(ids=[vector_results.ids[0]])
                 if kg_node and len(kg_node) > 0:
                     hpo_name = kg_node[0].properties['node_name'] if kg_node else None
-                    if vector_results.similarities[0] > 0.5 and kg_node:
+                    if vector_results.similarities[0] > 0.5 and kg_node: ## REVISE, SOME KIND OF THRESHOLD?
                         new_symptoms.append(hpo_name)
                 else:
                     print(f"Term: {term} | No KG node found for vector ID: {vector_results.ids[0]}")
@@ -103,43 +103,40 @@ class DiseaseModeEvaluator(PrimeKG):
         _ = Ontology()  # Initialize the HPO ontology
 
         print("Running disease mode evaluation...")
-        for disease in tqdm(list(self.dataset.keys()), desc="Processing diseases"):
+        for disease in tqdm(list(self.dataset.keys())[97:100], desc="Processing diseases"):
             rag_result = self.rag_results.get(disease, None) 
             no_rag_result = self.no_rag_results.get(disease, None) 
 
             if (rag_result is not None and no_rag_result is not None and rag_result.get('symptoms') and no_rag_result.get('symptoms')):
                 # Ensure HPO terms are used for symptoms
-                rag_result['symptoms'] = self.find_HPO_embedding(rag_result['symptoms']) if rag_result['symptoms'] else []
-                no_rag_result['symptoms'] = self.find_HPO_embedding(no_rag_result['symptoms']) if no_rag_result['symptoms'] else []
-
-                if not rag_result['symptoms'] or not no_rag_result['symptoms']:
-                    no_results.append(disease)
-                    continue
+                rag_result['symptoms'] = self.find_HPO_embedding(rag_result['symptoms'])
+                no_rag_result['symptoms'] = self.find_HPO_embedding(no_rag_result['symptoms'])
 
                 common_symptoms = set(r.lower() for r in rag_result['symptoms']).intersection(
                     set(n.lower() for n in no_rag_result['symptoms'])) if rag_result and no_rag_result else []
                 
                 rag_matches = set(s.lower() for s in rag_result['symptoms']).intersection(
                     set(d.lower() for d in self.dataset[disease])) if rag_result else set()
-                
+
                 no_rag_matches = set(s.lower() for s in no_rag_result['symptoms']).intersection(
                     set(d.lower() for d in self.dataset[disease])) if no_rag_result else set()
 
                 # Count parent matches for RAG
-                count_rag = 0
+                count_rag = set()
                 for symptom in rag_result['symptoms']:
                     try: 
-                        hpo_term = Ontology.get_hpo_object(symptom)
+                        hpo_term = Ontology.get_hpo_object(symptom) #ensure all terms are valid HPO
                     except RuntimeError:
                         hpo_term = None
+                        continue
                     if hpo_term and hpo_term.parents:
                         for parent in hpo_term.parents:
                             parent_name = parent.name
-                            if parent_name.lower() in [d.lower() for d in self.dataset[disease]]:
-                                count_rag += 1
-                
+                            if parent_name.lower() in [d.lower() for d in self.dataset[disease]] and parent_name.lower() not in count_rag: # check for matches in response
+                                count_rag.add(parent_name.lower())
+
                 # Count parent matches for No-RAG
-                count_no_rag = 0
+                count_no_rag = set()
                 for symptom in no_rag_result['symptoms']:
                     try: 
                         hpo_term = Ontology.get_hpo_object(symptom)
@@ -148,8 +145,8 @@ class DiseaseModeEvaluator(PrimeKG):
                     if hpo_term and hpo_term.parents:
                         for parent in hpo_term.parents:
                             parent_name = parent.name
-                            if parent_name.lower() in [d.lower() for d in self.dataset[disease]]:
-                                count_no_rag += 1
+                            if parent_name.lower() in [d.lower() for d in self.dataset[disease]] and parent_name.lower() not in count_no_rag: #check for matches in response
+                                count_no_rag.add(parent_name.lower())
 
                 # Calculate precision and recall
                 rag_precision = len(rag_matches) / len(rag_result['symptoms']) if len(rag_result['symptoms']) > 0 else 0.0
@@ -166,11 +163,11 @@ class DiseaseModeEvaluator(PrimeKG):
                     "common_symptoms": len(common_symptoms),
                     "total_symptoms": len(self.dataset[disease]),
                     "rag_total_symptoms": len(rag_result['symptoms']),
-                    "rag_matches": len(rag_matches) + count_rag,
-                    "rag_hallucinations": len(rag_result['symptoms']) - len(rag_matches) - count_rag,
+                    "rag_matches": len(rag_matches) + len(count_rag),
+                    "rag_hallucinations": len(rag_result['symptoms']) - len(rag_matches) - len(count_rag),
                     "no_rag_total_symptoms": len(no_rag_result['symptoms']),
-                    "no_rag_matches": len(no_rag_matches) + count_no_rag,
-                    "no_rag_hallucinations": len(no_rag_result['symptoms']) - len(no_rag_matches) - count_no_rag,
+                    "no_rag_matches": len(no_rag_matches) + len(count_no_rag),
+                    "no_rag_hallucinations": len(no_rag_result['symptoms']) - len(no_rag_matches) - len(count_no_rag),
                     "rag_accuracy": len(rag_matches) / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0,
                     "no_rag_accuracy": len(no_rag_matches) / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0,
                     "rag_precision": rag_precision,
@@ -258,7 +255,7 @@ class DiseaseModeEvaluator(PrimeKG):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate Disease Mode results using PrimeKG")
+    parser = argparse.ArgumentParser(description="Evaluate DiseaseMode results using PrimeKG")
     parser.add_argument('--data', type=str, required=True, 
                        help='Path to the data file to run the evaluation with, data/phenopackets/phenopackets_diseases.json or data/Orphanet/orphanet*.json')
     parser.add_argument('--rag-results', type=str, required=True, 
@@ -266,7 +263,7 @@ def main():
     parser.add_argument('--no-rag-results', type=str, required=True, 
                        help='Path to the No-RAG results file')
     parser.add_argument('--outdir', type=str, 
-                       default=os.path.expanduser('~/scratch-llm/results/disease_mode/'),
+                       default=os.path.expanduser('~/scratch-llm/results/disease_mode/evaluation'),
                        help='Output directory for results')
     
     args = parser.parse_args()
