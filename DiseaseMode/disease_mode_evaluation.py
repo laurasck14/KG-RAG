@@ -103,7 +103,7 @@ class DiseaseModeEvaluator(PrimeKG):
         _ = Ontology()  # Initialize the HPO ontology
 
         print("Running disease mode evaluation...")
-        for disease in tqdm(list(self.dataset.keys())[97:100], desc="Processing diseases"):
+        for disease in tqdm(list(self.dataset.keys()), desc="Processing diseases"):
             rag_result = self.rag_results.get(disease, None) 
             no_rag_result = self.no_rag_results.get(disease, None) 
 
