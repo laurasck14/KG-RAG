@@ -309,10 +309,9 @@ class DiseaseModeGenerator(PrimeKG):
             
             context, phenotypes, top_node_id = self.retrieve_disease_context(disease)
             prompt_template, text_chunks, phenotype_context = self.get_prompt_and_inputs(context, phenotypes)
-
             for run in range(runs):
                 print(f" == RAG: {disease} (Run {run+1}) ==", flush=True)
-                if prompt_template:
+                if prompt_template and (text_chunks is not None or phenotype_context is not None):
                     summarizer = TreeSummarize(verbose=True, llm=self.llm, summary_template=prompt_template)
                     response = self.safe_llm_call(summarizer,
                         query_str=disease,
@@ -368,12 +367,12 @@ class DiseaseModeGenerator(PrimeKG):
 
 
         # Save results
-        rag_results_file = os.path.join(outdir, f'{self.dataset_name}_rag_results_test.json')
+        rag_results_file = os.path.join(outdir, f'{self.dataset_name}_rag_results.json')
         with open(rag_results_file, 'w') as f:
            json.dump(rag_results, f, indent=2)
         print(f"✓ RAG results saved to: {rag_results_file}")
 
-        no_rag_results_file = os.path.join(outdir, f'{self.dataset_name}_no_rag_results_test.json')
+        no_rag_results_file = os.path.join(outdir, f'{self.dataset_name}_no_rag_results.json')
         with open(no_rag_results_file, 'w') as f:
             json.dump(no_rag_results, f, indent=2)
         print(f"✓ No-RAG results saved to: {no_rag_results_file}")
