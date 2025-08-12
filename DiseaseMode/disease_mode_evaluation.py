@@ -148,33 +148,32 @@ class DiseaseModeEvaluator(PrimeKG):
                             if parent_name.lower() in [d.lower() for d in self.dataset[disease]] and parent_name.lower() not in count_no_rag: #check for matches in response
                                 count_no_rag.add(parent_name.lower())
 
-                # Calculate precision and recall
-                rag_precision = len(rag_matches) / len(rag_result['symptoms']) if len(rag_result['symptoms']) > 0 else 0.0
-                rag_recall = len(rag_matches) / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0
-                no_rag_precision = len(no_rag_matches) / len(no_rag_result['symptoms']) if len(no_rag_result['symptoms']) > 0 else 0.0
-                no_rag_recall = len(no_rag_matches) / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0
+                rag_matches = len(rag_matches) + len(count_rag) # add the matches from the parents
+                no_rag_matches = len(no_rag_matches) + len(count_no_rag)
 
-                # Calculate symptom coverage
-                symptom_coverage = len(set(self.dataset[disease]) - set(rag_result['symptoms']) - set(no_rag_result['symptoms'])) / len(set(self.dataset[disease])) if len(set(self.dataset[disease])) > 0 else 0.0
-                
+                # Calculate precision and recall
+                rag_precision = rag_matches / len(rag_result['symptoms']) if len(rag_result['symptoms']) > 0 else 0.0
+                rag_recall = rag_matches / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0
+                no_rag_precision = no_rag_matches / len(no_rag_result['symptoms']) if len(no_rag_result['symptoms']) > 0 else 0.0
+                no_rag_recall = no_rag_matches / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0
+
                 results.append({
                     "disease": disease.strip().replace("\"", ""),
-                    "rag_top_node_id": rag_result['top_node_id'] if rag_result['top_node_id'] else None,
-                    "common_symptoms": len(common_symptoms),
-                    "total_symptoms": len(self.dataset[disease]),
-                    "rag_total_symptoms": len(rag_result['symptoms']),
-                    "rag_matches": len(rag_matches) + len(count_rag),
-                    "rag_hallucinations": len(rag_result['symptoms']) - len(rag_matches) - len(count_rag),
-                    "no_rag_total_symptoms": len(no_rag_result['symptoms']),
-                    "no_rag_matches": len(no_rag_matches) + len(count_no_rag),
-                    "no_rag_hallucinations": len(no_rag_result['symptoms']) - len(no_rag_matches) - len(count_no_rag),
-                    "rag_accuracy": len(rag_matches) / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0,
-                    "no_rag_accuracy": len(no_rag_matches) / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0,
+                    "rag_top_node_id": rag_result['top_node_id'] if rag_result['top_node_id'] else None, # top node ID from PrimeKG
+                    "common_symptoms": len(common_symptoms), # matches between the RAG and no-RAG
+                    "total_symptoms": len(self.dataset[disease]), # total symptoms in the dataset for a disease
+                    "rag_total_symptoms": len(rag_result['symptoms']), # total symptoms in the RAG response
+                    "rag_matches": rag_matches, # matches between the RAG response and the dataset
+                    "rag_hallucinations": len(rag_result['symptoms']) - rag_matches, # number of not matched symptoms in the RAG
+                    "no_rag_total_symptoms": len(no_rag_result['symptoms']), # total symptoms in the No-RAG response
+                    "no_rag_matches": no_rag_matches, # matches between the No-RAG response and the dataset
+                    "no_rag_hallucinations": len(no_rag_result['symptoms']) - no_rag_matches, # number of not matched symptoms in the No-RAG
+                    "rag_accuracy": rag_matches / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0,
+                    "no_rag_accuracy": no_rag_matches / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0,
                     "rag_precision": rag_precision,
                     "rag_recall": rag_recall,
                     "no_rag_precision": no_rag_precision,
                     "no_rag_recall": no_rag_recall,
-                    "symptom_coverage": symptom_coverage,
                 })
             else:
                 no_results.append(disease)
@@ -182,7 +181,7 @@ class DiseaseModeEvaluator(PrimeKG):
         
         return pd.DataFrame(results), no_results
 
-    def run_evaluation(self, dataset_file, rag_results_file, no_rag_results_file, output_dir=None):
+    def run_evaluation(self, dataset_file, rag_results_file, no_rag_results_file, outdir=None):
         """
         Complete evaluation pipeline.
         
@@ -190,12 +189,12 @@ class DiseaseModeEvaluator(PrimeKG):
             dataset_file (str): Path to dataset file
             rag_results_file (str): Path to RAG results
             no_rag_results_file (str): Path to No-RAG results
-            output_dir (str): Output directory for results
+            outdir (str): Output directory for results
         """
-        if output_dir is None:
-            output_dir = os.path.expanduser('~/scratch-llm/results/disease_mode/')
-        
-        os.makedirs(output_dir, exist_ok=True)
+        if outdir is None:
+            outdir = os.path.expanduser('~/scratch-llm/results/disease_mode/')
+
+        os.makedirs(outdir, exist_ok=True)
 
         try:
             # Load data
@@ -229,8 +228,8 @@ class DiseaseModeEvaluator(PrimeKG):
                 results_df, no_results = self.evaluate_disease_mode()
                 
                 # Save results
-                results_file = os.path.join(output_dir, f'{self.dataset_name}_results.csv')
-                no_results_file = os.path.join(output_dir, f'{self.dataset_name}_no_results.txt') # the evaluated diseases is either not in RAG or no-RAG results
+                results_file = os.path.join(outdir, f'{self.dataset_name}_results.csv')
+                no_results_file = os.path.join(outdir, f'{self.dataset_name}_no_results.txt') # the evaluated diseases is either not in RAG or no-RAG results
 
                 results_df.to_csv(results_file, index=False)
                 print(f"✓ Results saved to: {results_file}")
