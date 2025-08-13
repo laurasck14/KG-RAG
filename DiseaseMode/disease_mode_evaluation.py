@@ -152,9 +152,9 @@ class DiseaseModeEvaluator(PrimeKG):
                 no_rag_matches = len(no_rag_matches) + len(count_no_rag)
 
                 # Calculate precision and recall
-                rag_precision = rag_matches / len(rag_result['symptoms']) if len(rag_result['symptoms']) > 0 else 0.0
-                rag_recall = rag_matches / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0
-                no_rag_precision = no_rag_matches / len(no_rag_result['symptoms']) if len(no_rag_result['symptoms']) > 0 else 0.0
+                rag_precision = rag_matches / len(rag_result['symptoms']) if len(rag_result['symptoms']) > 0 else 0.0 # fraction of predicted symptoms that are correct
+                rag_recall = rag_matches / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0 # fraction of symptoms correctly identified
+                no_rag_precision = no_rag_matches / len(no_rag_result['symptoms']) if len(no_rag_result['symptoms']) > 0 else 0.0 
                 no_rag_recall = no_rag_matches / len(self.dataset[disease]) if len(self.dataset[disease]) > 0 else 0.0
 
                 results.append({
