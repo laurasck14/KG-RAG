@@ -138,10 +138,27 @@ class DiseaseModeGenerator(PrimeKG):
                 filters=self.disease_filter,
             )
         )
+        if not vector_results.ids or len(vector_results.ids) == 0:
+            print(f"Warning: No vector results found for query: {query}")
+            return None, None, None
+        
+        if not vector_results.similarities or len(vector_results.similarities) == 0:
+            print(f"Warning: No similarity scores found for query: {query}")
+            return None, None, None
         
         top_node_id = vector_results.ids[0]
         top_node_score = vector_results.similarities[0]
-        kg_node = self.graph_store.get(ids=[top_node_id])[0]
+
+        try: 
+            kg_nodes = self.graph_store.get(ids=[top_node_id])
+            if not kg_nodes or len(kg_nodes) == 0:
+                print(f"Warning: No graph node found for ID: {top_node_id}")
+                return None, None, top_node_id
+        
+            kg_node = kg_nodes[0]
+        except Exception as e:
+            print(f"Error getting graph node {top_node_id}: {e}")
+            return None, None, top_node_id
                 
         results = [{ # Create results list with primary node
             "node_index": kg_node.id_,
@@ -306,8 +323,13 @@ class DiseaseModeGenerator(PrimeKG):
             no_rag_results[disease] = {
                 "symptoms": []  # Initialize empty list for no-RAG results
             }
+            try:
+                context, phenotypes, top_node_id = self.retrieve_disease_context(disease)
+            except Exception as e:
+                print(f"Error retrieving context for {disease}: {e}")
+                context, phenotypes, top_node_id = None, None, None
             
-            context, phenotypes, top_node_id = self.retrieve_disease_context(disease)
+            # context, phenotypes, top_node_id = self.retrieve_disease_context(disease)
             prompt_template, text_chunks, phenotype_context = self.get_prompt_and_inputs(context, phenotypes)
             for run in range(runs):
                 print(f" == RAG: {disease} (Run {run+1}) ==", flush=True)
