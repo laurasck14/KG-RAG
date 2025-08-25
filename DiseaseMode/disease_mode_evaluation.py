@@ -107,7 +107,12 @@ class DiseaseModeEvaluator(PrimeKG):
             rag_result = self.rag_results.get(disease, None) 
             no_rag_result = self.no_rag_results.get(disease, None) 
 
-            if (rag_result is not None and no_rag_result is not None and rag_result.get('symptoms') and no_rag_result.get('symptoms')):
+            if (rag_result is not None and
+                 no_rag_result is not None and 
+                 rag_result.get('symptoms') and 
+                 no_rag_result.get('symptoms') and
+                 self.dataset[disease] is not None  #dataset[disease] is not empty
+                ):
                 # Ensure HPO terms are used for symptoms
                 rag_result['symptoms'] = self.find_HPO_embedding(rag_result['symptoms'])
                 no_rag_result['symptoms'] = self.find_HPO_embedding(no_rag_result['symptoms'])
