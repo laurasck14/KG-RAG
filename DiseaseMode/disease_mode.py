@@ -243,9 +243,8 @@ class DiseaseModeGenerator(PrimeKG):
 
         CRITICAL INSTRUCTIONS:
         1. Use the information from the context and your own knowledge to provide a comprehensive answer
-        2. Return MAXIMUM the 16 most relevant symptoms, if there are more than 16 symptoms, return the most relevant ones
-        3. Use HPO medical terminology and avoid using including redundant symptoms
-        4. Return EXACTLY this JSON format (no variations):
+        2. Use HPO medical terminology and avoid using including redundant symptoms
+        3. Return EXACTLY this JSON format (no variations):
 
         Always format your response as a VALID JSON:
         {
@@ -294,9 +293,8 @@ class DiseaseModeGenerator(PrimeKG):
 
         CRITICAL INSTRUCTIONS:
         1. Use only your own knowledge to provide a comprehensive answer
-        2. Return MAXIMUM the 16 most relevant symptoms, if there are more than 16 symptoms, return the most relevant ones
-        3. Use only HPO medical terminology and avoid including redundant symptoms
-        4. Return EXACTLY this JSON format (no variations):
+        2. Use only HPO medical terminology and avoid including redundant symptoms
+        3. Return EXACTLY this JSON format (no variations):
 
         Always format your response as a VALID JSON:
         {
