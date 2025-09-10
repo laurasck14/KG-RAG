@@ -244,7 +244,8 @@ class DiseaseModeGenerator(PrimeKG):
         CRITICAL INSTRUCTIONS:
         1. Use the information from the context and your own knowledge to provide a comprehensive answer
         2. Use HPO medical terminology and avoid using including redundant symptoms
-        3. Return EXACTLY this JSON format (no variations):
+        3. Include only relevant symptoms to the disease
+        4. Return EXACTLY this JSON format (no variations):
 
         Always format your response as a VALID JSON:
         {
@@ -294,7 +295,8 @@ class DiseaseModeGenerator(PrimeKG):
         CRITICAL INSTRUCTIONS:
         1. Use only your own knowledge to provide a comprehensive answer
         2. Use only HPO medical terminology and avoid including redundant symptoms
-        3. Return EXACTLY this JSON format (no variations):
+        3. Include only relevant symptoms to the disease
+        4. Return EXACTLY this JSON format (no variations):
 
         Always format your response as a VALID JSON:
         {
