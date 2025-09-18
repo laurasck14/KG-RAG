@@ -39,7 +39,7 @@ class PrimeKG:
             if container_ids:
                 print(f"Removing {len(container_ids)} containers...")
                 for container_id in container_ids:
-                    os.system(f'udocker rm {container_id}')
+                    os.system(f'udocker rm -f {container_id}')
                 print("✓ Containers cleaned up")
             else:
                 print("No containers found")
@@ -50,7 +50,7 @@ class PrimeKG:
     def setup_containers(self):
         """Setup NebulaGraph containers"""
         time.sleep(20)
-        services = ['nebula-metad', 'nebula-graphd', 'nebula-storaged']
+        services = ['nebula-metad', 'nebula-storaged', 'nebula-graphd']
         print("Setting up NebulaGraph containers...")
         
         for service in services:
@@ -119,6 +119,7 @@ class PrimeKG:
                             print("General RuntimeError, restarting containers...")
                         
                         # Restart containers and try again
+                        self.stop_services()
                         self.cleanup_containers()
                         self.setup_containers()
                     else:
@@ -135,6 +136,7 @@ class PrimeKG:
                         print("Unknown error, attempting restart...")
                     
                     # Clean restart for any exception
+                    self.stop_services()
                     self.cleanup_containers()
                     self.setup_containers()
                 else:
