@@ -1,0 +1,45 @@
+Immunodeficiency 123 with HPV-related verrucosis
+Myotonia congenita, dominant
+Muscular dystrophy, limb-girdle, autosomal recessive 29
+Houge-Janssen syndrome 2
+Rubinstein-Taybi syndrome 2
+Lui-Jee-Baron syndrome
+Deafness, autosomal recessive 123
+Donohue syndrome
+Kufor-Rakeb syndrome
+Fanconi anemia, complementation group C
+Thrombocytopenia 11 with multiple congenital anomalies and dysmorphic facies
+Glutaricaciduria, type I
+Rabin-Pappas syndrome
+Thrombocythemia 2
+Choreoacanthocytosis
+Fanconi anemia, complementation group I
+Neurodegeneration with brain iron accumulation 9
+Developmental and epileptic encephalopathy 14
+Intellectual developmental disorder, X-linked 113
+Muscular dystrophy, limb-girdle, autosomal recessive 28
+Muscular dystrophy, limb-girdle, autosomal recessive 21
+Chondrocalcinosis 2
+Atrioventricular septal defect, partial, with heterotaxy syndrome
+Ectodermal dysplasia 9, hair/nail type
+Tubulointerstitial kidney disease, autosomal dominant, 1
+Tubulointerstitial kidney disease, autosomal dominant, 2
+Tubulointerstitial kidney disease, autosomal dominant, 3
+Acrofacial dysostosis, Cincinnati type
+Neuropathy, hereditary sensory and autonomic, type II
+Cutis laxa, autosomal recessive, type IIC
+Birt-Hogg-Dube syndrome 2
+Seckel syndrome 11
+Boucher-Neuhauser syndrome
+Yuksel-Vogel-Bauser syndrome
+Vici syndrome
+Parkinson disease 23, autosomal recessive, early onset
+ReNU syndrome
+ZTTK SYNDROME
+Developmental and epileptic encephalopathy 50	616457	AR	3
+White-Sutton syndrome
+Bamforth-Lazarus syndrome
+Myhre syndrome
+Tubulointerstitial kidney disease, autosomal dominant, 5
+Neuropathy, hereditary sensory and autonomic, type IIB
+Lathosterolosis
